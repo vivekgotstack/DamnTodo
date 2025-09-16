@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "./ui/button";
 
 type TodoProps = {
@@ -8,18 +8,40 @@ type TodoProps = {
 };
 function TodoList() {
   const [todos, setTodos] = useState<TodoProps[]>([]);
+  useEffect(() => {
+    try {
+      const savedTodos = localStorage.getItem("todos");
+      if (savedTodos) {
+        // only parse if savedTodos is not null
+        setTodos(
+          JSON.parse(savedTodos).map((t: any) => ({ ...t, id: new Date(t.id) }))
+        );
+      }
+    } catch (e) {
+      console.error("Failed to load todos from localStorage:", e);
+      setTodos([]); // fallback to empty array
+    }
+  }, []);
+
   const handleAddTodo = (todo: TodoProps): void => {
-    setTodos((prev) => [...prev, todo]);
+    setTodos((prev) => {
+      const updatedTodos = [...prev, todo];
+      localStorage.setItem("todos", JSON.stringify(updatedTodos));
+      return updatedTodos;
+    });
   };
   const handleDelTodo = (id: Date): void => {
-    setTodos((prev) =>
-      prev.filter((todo) => todo.id.getTime() !== id.getTime())
-    );
+    setTodos((prev) => {
+      const updated = prev.filter((todo) => todo.id.getTime() !== id.getTime());
+      localStorage.setItem("todos", JSON.stringify(updated));
+      return updated;
+    });
   };
-  const toggleMode = (id: string): void => {
+
+  const toggleMode = (id: Date): void => {
     setTodos((prev) =>
       prev.map((todo) =>
-        todo.id.toString() === id
+        todo.id.getTime() === id.getTime()
           ? { ...todo, mode: todo.mode === "edit" ? "save" : "edit" }
           : todo
       )
@@ -62,13 +84,15 @@ function TodoList() {
               className="text-xl p-1 rounded text-black border border-black focus:border-gray-700"
               value={todo.msg}
               onChange={(e) =>
-                setTodos((prev) =>
-                  prev.map((t) =>
-                    t.id.toString() === todo.id.toString()
+                setTodos((prev) => {
+                  const updated = prev.map((t) =>
+                    t.id.getTime() === todo.id.getTime()
                       ? { ...t, msg: e.target.value }
                       : t
-                  )
-                )
+                  );
+                  localStorage.setItem("todos", JSON.stringify(updated));
+                  return updated;
+                })
               }
             />
           ) : (
@@ -79,7 +103,7 @@ function TodoList() {
             {todo.mode === "edit" ? (
               <button
                 className="text-gray-900 hover:text-black transition-transform hover:-translate-y-0.5"
-                onClick={() => toggleMode(todo.id.toString())}
+                onClick={() => toggleMode(todo.id)}
               >
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
@@ -95,7 +119,7 @@ function TodoList() {
             ) : (
               <button
                 className="text-gray-900 hover:text-black transition-transform hover:-translate-y-0.5"
-                onClick={() => toggleMode(todo.id.toString())}
+                onClick={() => toggleMode(todo.id)}
               >
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
