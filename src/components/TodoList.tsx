@@ -65,7 +65,7 @@ function TodoList() {
           <Button
             onClick={() => {
               if (input.trim() === "") return;
-              handleAddTodo({ id: new Date(), msg: input, mode: "save" });
+              handleAddTodo({ id: new Date(), msg: input, mode: "edit" });
               setInput("");
             }}
           >
@@ -76,7 +76,7 @@ function TodoList() {
       {todos.map((todo) => (
         <div
           key={todo.id.toString()}
-          className="mt-5 min-w-auto max-w-full wrap-break-word bg-gray-600 rounded-lg p-2 border border-gray-800 flex flex-col justify-between hover:border-black "
+          className="mt-5 w-full bg-gray-600 rounded-lg p-2 border border-gray-800 flex flex-col justify-between hover:border-black "
         >
           {todo.mode === "edit" ? (
             <input
@@ -99,7 +99,7 @@ function TodoList() {
           )}
 
           <div className="flex gap-5 mt-4">
-            {todo.mode === "edit" ? (
+            {todo.mode === "save" ? (
               <button
                 className="text-gray-900 hover:text-black transition-transform hover:-translate-y-0.5"
                 onClick={() => toggleMode(todo.id)}
