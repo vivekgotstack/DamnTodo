@@ -66,7 +66,7 @@ function TodoList() {
           <Button
             onClick={() => {
               if (input.trim() === "") return;
-              handleAddTodo({ id: new Date(), msg: input, mode: "edit" });
+              handleAddTodo({ id: new Date(), msg: input, mode: "save" });
               setInput("");
             }}
           >
