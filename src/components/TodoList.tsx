@@ -12,14 +12,13 @@ function TodoList() {
     try {
       const savedTodos = localStorage.getItem("todos");
       if (savedTodos) {
-        // only parse if savedTodos is not null
         setTodos(
           JSON.parse(savedTodos).map((t: any) => ({ ...t, id: new Date(t.id) }))
         );
       }
     } catch (e) {
       console.error("Failed to load todos from localStorage:", e);
-      setTodos([]); // fallback to empty array
+      setTodos([]);
     }
   }, []);
 
@@ -79,7 +78,7 @@ function TodoList() {
           key={todo.id.toString()}
           className="mt-5 min-w-auto max-w-full wrap-break-word bg-gray-600 rounded-lg p-2 border border-gray-800 flex flex-col justify-between hover:border-black "
         >
-          {todo.mode === "save" ? (
+          {todo.mode === "edit" ? (
             <input
               className="text-xl p-1 rounded text-black border border-black focus:border-gray-700"
               value={todo.msg}
