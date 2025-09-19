@@ -18,7 +18,11 @@ function TodoList() {
   }, []);
 
   useEffect(() => {
-    if (todos.length) localStorage.setItem("todos", JSON.stringify(todos));
+    if (todos.length === 0) {
+      localStorage.removeItem("todos");
+    } else {
+      localStorage.setItem("todos", JSON.stringify(todos));
+    }
   }, [todos]);
 
   const toggleMode = (id: string) => {
@@ -41,7 +45,7 @@ function TodoList() {
   };
   return (
     <div className="w-full min-h-screen bg-gray-800 flex flex-col justify-center items-center">
-      <Card className="bg-gray-700 border-0 w-1/2 flex items-center justify-center mt-20 mb-5">
+      <Card className="bg-gray-700 border-0 w-1/2 flex items-center justify-center mt-8 mb-5">
         <CardTitle className="text-white font-bold text-4xl">
           TodoList
         </CardTitle>
@@ -75,7 +79,9 @@ function TodoList() {
               }}
             ></input>
           ) : (
-            <div className="text-2xl h-auto break-all overflow-hidden">{todo.msg}</div>
+            <div className="text-2xl h-auto break-all overflow-hidden">
+              {todo.msg}
+            </div>
           )}
           <div className="flex gap-4">
             {todo.mode === "edit" ? (
