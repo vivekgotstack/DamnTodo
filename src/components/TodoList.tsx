@@ -45,8 +45,8 @@ function TodoList() {
   };
   return (
     <div className="w-full min-h-screen bg-gray-800 flex flex-col justify-center items-center">
-      <Card className="bg-gray-700 border-0 w-1/2 flex items-center justify-center mt-8 mb-5">
-        <CardTitle className="text-white font-bold text-4xl">
+      <Card className="bg-gray-700 h-2/12 border-0 w-svw fixed top-0 p-5 flex flex-col justify-center items-center">
+        <CardTitle className="text-center font-bold text-5xl text-transparent bg-clip-text bg-gradient-to-r from-gray-800 via-gray-900 to-black">
           TodoList
         </CardTitle>
         <Button
@@ -61,10 +61,11 @@ function TodoList() {
           Add Task
         </Button>
       </Card>
+      <div className="mb-40"></div>
       {todos.map((todo) => (
         <div
           key={todo.id}
-          className="w-2/3 bg-gray-700 border-0 hover:border-gray-600 hover:border p-2 rounded-lg flex justify-between mb-5"
+          className="w-3/4 bg-gray-700 border-0 hover:border-gray-600 hover:border p-2 rounded-lg flex justify-between mb-5"
         >
           {todo.mode === "save" ? (
             <input
