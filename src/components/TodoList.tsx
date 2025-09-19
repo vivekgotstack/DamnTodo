@@ -64,7 +64,7 @@ function TodoList() {
         >
           {todo.mode === "save" ? (
             <input
-              className="w-full text-xl text-black"
+              className="w-full text-2xl text-black border-gray-500"
               value={todo.msg}
               onChange={(e) => {
                 setTodos((prev) =>
@@ -75,7 +75,7 @@ function TodoList() {
               }}
             ></input>
           ) : (
-            <div className="text-xl h-auto break-all overflow-hidden">{todo.msg}</div>
+            <div className="text-2xl h-auto break-all overflow-hidden">{todo.msg}</div>
           )}
           <div className="flex gap-4">
             {todo.mode === "edit" ? (
