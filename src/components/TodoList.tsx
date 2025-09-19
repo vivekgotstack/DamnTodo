@@ -11,9 +11,10 @@ function TodoList() {
   const [todos, setTodos] = useState<TodoProps[]>([]);
 
   useEffect(() => {
-    let todos = localStorage.getItem("todos");
+    const todos = localStorage.getItem("todos");
     if (todos) {
-      setTodos(JSON.parse(todos));
+      const todoArr = JSON.parse(todos);
+      setTodos(() => todoArr.map((t: TodoProps) => ({ ...t, mode: "edit" })));
     }
   }, []);
 
@@ -69,7 +70,7 @@ function TodoList() {
         >
           {todo.mode === "save" ? (
             <input
-              className="w-full text-2xl text-black border-gray-500"
+              className="w-full text-2xl text-black border border-gray-500"
               value={todo.msg}
               onChange={(e) => {
                 setTodos((prev) =>
