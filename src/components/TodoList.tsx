@@ -17,6 +17,7 @@ import {
   updateTodo,
   setTodo,
   clearAllTodos,
+  type Todo,
 } from "@/features/todo/todoSlice";
 import { useEffect, useState } from "react";
 import type { RootState } from "@/store";
@@ -31,7 +32,12 @@ function TodoList() {
     const storedTodo = localStorage.getItem("todos");
     if (storedTodo)
       try {
-        const parsed = JSON.parse(storedTodo);
+        const parsed: Todo = JSON.parse(storedTodo);
+        parsed.forEach((t) => {
+          if (t.mode === "edit") {
+            t.mode = "save";
+          }
+        });
         dispatch(setTodo(parsed));
       } catch (err) {
         console.error("Failed to parse stored todos:", err);
@@ -119,17 +125,30 @@ function TodoList() {
             <div className="break-all translate-y-1.5">{todo.msg}</div>
           )}
           <div className="flex gap-2 items-baseline-last">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="32"
-              height="36"
-              viewBox="0 0 22 25"
-              className="fill-current cursor-pointer edit-svg"
-              onClick={() => dispatch(toggleMode(todo.id))}
-            >
-              <path d="m18.988 2.012l3 3L19.701 7.3l-3-3zM8 16h3l7.287-7.287l-3-3L8 13z" />
-              <path d="M19 19H8.158c-.026 0-.053.01-.079.01c-.033 0-.066-.009-.1-.01H5V5h6.847l2-2H5c-1.103 0-2 .896-2 2v14c0 1.104.897 2 2 2h14a2 2 0 0 0 2-2v-8.668l-2 2z" />
-            </svg>
+            {todo.mode === "save" ? (
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="32"
+                height="36"
+                viewBox="0 0 22 25"
+                className="fill-current cursor-pointer edit-svg"
+                onClick={() => dispatch(toggleMode(todo.id))}
+              >
+                <path d="m18.988 2.012l3 3L19.701 7.3l-3-3zM8 16h3l7.287-7.287l-3-3L8 13z" />
+                <path d="M19 19H8.158c-.026 0-.053.01-.079.01c-.033 0-.066-.009-.1-.01H5V5h6.847l2-2H5c-1.103 0-2 .896-2 2v14c0 1.104.897 2 2 2h14a2 2 0 0 0 2-2v-8.668l-2 2z" />
+              </svg>
+            ) : (
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="38"
+                height="38"
+                viewBox="0 0 32 32"
+                className="fill-current cursor-pointer save-svg"
+                onClick={() => dispatch(toggleMode(todo.id))}
+              >
+                <path d="m27.71 9.29l-5-5A1 1 0 0 0 22 4H6a2 2 0 0 0-2 2v20a2 2 0 0 0 2 2h20a2 2 0 0 0 2-2V10a1 1 0 0 0-.29-.71M12 6h8v4h-8Zm8 20h-8v-8h8Zm2 0v-8a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8H6V6h4v4a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V6.41l4 4V26Z" />
+              </svg>
+            )}
             <svg
               xmlns="http://www.w3.org/2000/svg"
               width="34"
