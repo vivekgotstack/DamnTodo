@@ -1,4 +1,4 @@
-<h1 align="center">📝 TodoApp</h1>
+<h1 align="center">📝 DamnTodo</h1>
 
 A **smart, persistent Todo app** built with **React, TypeScript, and Redux**.  
 Never lose your edits — even if you refresh mid-task, your changes are saved automatically using **localStorage**.
