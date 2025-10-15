@@ -108,7 +108,7 @@ function TodoList() {
       {todos.map((todo) => (
         <div
           key={todo.id}
-          className="mt-4 border-4 border-amber-500 hover:-translate-y-0.5 w-11/12 text-amber-700 p-2 rounded-lg flex justify-between"
+          className="mt-4 border-4 border-amber-400 hover:-translate-y-0.5 w-11/12 text-amber-700 p-2 rounded-lg flex justify-between"
         >
           {todo.mode === "edit" ? (
             <div className="w-full h-10">
