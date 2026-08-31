@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">DamnTodo</string>
+    <string name="title_activity_main">DamnTodo</string>
+    <string name="package_name">com.damntodo.app</string>
+    <string name="custom_url_scheme">com.damntodo.app</string>
+</resources>

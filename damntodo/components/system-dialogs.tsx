@@ -20,7 +20,7 @@ export function InstallDialog({ open, installed, native, onClose, onInstall }: {
 }) {
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
-      <DialogContent className="overflow-hidden border-sky-200/15 bg-[#091526]/98 p-0 text-white sm:max-w-[560px]">
+      <DialogContent className="max-h-[92svh] overflow-y-auto border-sky-200/15 bg-[#091526]/98 p-0 text-white sm:max-w-[560px]">
         <div className="install-glow" />
         <DialogHeader className="relative px-6 pt-7 text-left">
           <Badge className="mb-3 w-fit border border-sky-200/15 bg-sky-200/8 text-sky-100"><Smartphone className="mr-1 size-3" />Mobile first</Badge>

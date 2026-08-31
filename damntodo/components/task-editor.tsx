@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useMemo, useState } from "react";
+import { type FormEvent, useState } from "react";
 import { AlarmClock, CalendarRange, ChevronRight, Clock3, Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -34,7 +34,7 @@ export function TaskEditor({ task, initialScheduledAt, defaultDuration, onClose,
     ? draftFromTask(task)
     : { ...emptyDraft(defaultDuration), scheduledAt: initialScheduledAt ?? "" });
   const update = <K extends keyof TaskDraft>(key: K, value: TaskDraft[K]) => setDraft((current) => ({ ...current, [key]: value }));
-  const sessions = useMemo(() => Math.max(1, Math.ceil(draft.totalDuration / draft.maxSessionDuration)), [draft.maxSessionDuration, draft.totalDuration]);
+  const sessions = Math.max(1, Math.ceil(draft.totalDuration / draft.maxSessionDuration));
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (!draft.title.trim() || (draft.kind === "goal" && !draft.dueAt)) return;
@@ -67,8 +67,8 @@ export function TaskEditor({ task, initialScheduledAt, defaultDuration, onClose,
             {!task && (
               <Tabs value={draft.kind} onValueChange={(value) => setKind(value as DraftKind)}>
                 <TabsList className="grid h-12 w-full grid-cols-2 border border-white/10 bg-white/4 p-1">
-                  <TabsTrigger value="task" className="gap-2 data-[state=active]:bg-sky-300/12 data-[state=active]:text-white"><Clock3 className="size-4" />Single task</TabsTrigger>
-                  <TabsTrigger value="goal" className="gap-2 data-[state=active]:bg-violet-300/12 data-[state=active]:text-white"><CalendarRange className="size-4" />Multi-day goal</TabsTrigger>
+                  <TabsTrigger value="task" className="gap-2 data-active:bg-sky-300/12 data-active:text-white"><Clock3 className="size-4" />Single task</TabsTrigger>
+                  <TabsTrigger value="goal" className="gap-2 data-active:bg-violet-300/12 data-active:text-white"><CalendarRange className="size-4" />Multi-day goal</TabsTrigger>
                 </TabsList>
               </Tabs>
             )}
@@ -91,23 +91,23 @@ export function TaskEditor({ task, initialScheduledAt, defaultDuration, onClose,
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="grid gap-2"><Label htmlFor="total-hours">Total effort in hours</Label><Input id="total-hours" type="number" inputMode="decimal" min="0.25" max="1000" step="0.25" value={draft.totalDuration / 60} onChange={(event) => update("totalDuration", Math.max(15, Math.round(Number(event.target.value || 0) * 60)))} className="h-11 border-white/12 bg-[#0b192c] text-white" /></div>
-                  <div className="grid gap-2"><Label>Maximum session</Label><Select value={String(draft.maxSessionDuration)} onValueChange={(value) => update("maxSessionDuration", Number(value))}><SelectTrigger className="h-11 w-full border-white/12 bg-[#0b192c] text-white"><SelectValue /></SelectTrigger><SelectContent className="border-white/12 bg-[#0b192c] text-slate-100">{SESSION_LIMITS.map((minutes) => <SelectItem key={minutes} value={String(minutes)}>{formatDuration(minutes)}</SelectItem>)}</SelectContent></Select></div>
+                  <div className="grid gap-2"><Label>Maximum session</Label><Select value={String(draft.maxSessionDuration)} onValueChange={(value) => update("maxSessionDuration", Number(value))}><SelectTrigger aria-label="Maximum session" className="h-11 w-full border-white/12 bg-[#0b192c] text-white"><SelectValue /></SelectTrigger><SelectContent className="border-white/12 bg-[#0b192c] text-slate-100">{SESSION_LIMITS.map((minutes) => <SelectItem key={minutes} value={String(minutes)}>{formatDuration(minutes)}</SelectItem>)}</SelectContent></Select></div>
                   <div className="grid gap-2"><Label htmlFor="goal-start">Start date</Label><Input id="goal-start" type="date" value={draft.availableFrom} min={localDateTime().slice(0, 10)} onChange={(event) => update("availableFrom", event.target.value)} className="h-11 border-white/12 bg-[#0b192c] text-white [color-scheme:dark]" /></div>
                   <div className="grid gap-2"><Label htmlFor="goal-deadline">Deadline</Label><Input id="goal-deadline" type="datetime-local" value={draft.dueAt} min={localDateTime()} onChange={(event) => update("dueAt", event.target.value)} required className="h-11 border-white/12 bg-[#0b192c] text-white [color-scheme:dark]" /></div>
                 </div>
               </div>
             ) : (
               <div className="grid gap-4 sm:grid-cols-3">
-                <div className="grid gap-2"><Label>Duration</Label><Select value={String(draft.duration)} onValueChange={(value) => update("duration", Number(value))}><SelectTrigger className="h-11 w-full border-white/12 bg-[#0b192c] text-white"><SelectValue /></SelectTrigger><SelectContent className="border-white/12 bg-[#0b192c] text-slate-100">{DURATIONS.map((minutes) => <SelectItem key={minutes} value={String(minutes)}>{formatDuration(minutes)}</SelectItem>)}</SelectContent></Select></div>
-                <div className="grid gap-2"><Label>Priority</Label><Select value={draft.priority} onValueChange={(value) => update("priority", value as Priority)}><SelectTrigger className="h-11 w-full border-white/12 bg-[#0b192c] text-white capitalize"><SelectValue /></SelectTrigger><SelectContent className="border-white/12 bg-[#0b192c] text-slate-100">{(["low", "medium", "high"] as Priority[]).map((priority) => <SelectItem key={priority} value={priority} className="capitalize">{priority}</SelectItem>)}</SelectContent></Select></div>
+                <div className="grid gap-2"><Label>Duration</Label><Select value={String(draft.duration)} onValueChange={(value) => update("duration", Number(value))}><SelectTrigger aria-label="Duration" className="h-11 w-full border-white/12 bg-[#0b192c] text-white"><SelectValue /></SelectTrigger><SelectContent className="border-white/12 bg-[#0b192c] text-slate-100">{DURATIONS.map((minutes) => <SelectItem key={minutes} value={String(minutes)}>{formatDuration(minutes)}</SelectItem>)}</SelectContent></Select></div>
+                <div className="grid gap-2"><Label>Priority</Label><Select value={draft.priority} onValueChange={(value) => update("priority", value as Priority)}><SelectTrigger aria-label="Priority" className="h-11 w-full border-white/12 bg-[#0b192c] text-white capitalize"><SelectValue /></SelectTrigger><SelectContent className="border-white/12 bg-[#0b192c] text-slate-100">{(["low", "medium", "high"] as Priority[]).map((priority) => <SelectItem key={priority} value={priority} className="capitalize">{priority}</SelectItem>)}</SelectContent></Select></div>
                 <div className="grid gap-2"><Label htmlFor="task-due">Due</Label><Input id="task-due" type="datetime-local" value={draft.dueAt} min={task ? undefined : localDateTime()} onChange={(event) => update("dueAt", event.target.value)} className="h-11 border-white/12 bg-[#0b192c] text-white [color-scheme:dark]" /></div>
                 <div className="grid gap-2 sm:col-span-2"><Label htmlFor="task-schedule">Schedule <span className="font-normal text-slate-500">optional</span></Label><Input id="task-schedule" type="datetime-local" value={draft.scheduledAt} onChange={(event) => update("scheduledAt", event.target.value)} className="h-11 border-white/12 bg-[#0b192c] text-white [color-scheme:dark]" /></div>
               </div>
             )}
 
             <div className="grid gap-4 rounded-2xl border border-rose-300/10 bg-rose-300/[.035] p-4 sm:grid-cols-2">
-              <div className="grid gap-2"><Label>Alarm mode</Label><Select disabled={!draft.dueAt} value={draft.dueAt ? draft.alarmMode : "none"} onValueChange={(value) => { const mode = value as AlarmMode; update("alarmMode", mode); update("reminderMinutes", mode === "none" ? null : (draft.reminderMinutes ?? 0)); }}><SelectTrigger className="h-11 w-full border-white/12 bg-[#0b192c] text-white"><SelectValue /></SelectTrigger><SelectContent className="border-white/12 bg-[#0b192c] text-slate-100"><SelectItem value="none">No alarm</SelectItem><SelectItem value="gentle">Gentle reminder</SelectItem><SelectItem value="strict">Strict until done</SelectItem></SelectContent></Select></div>
-              <div className="grid gap-2"><Label>When</Label><Select disabled={!draft.dueAt || draft.alarmMode === "none"} value={String(draft.reminderMinutes ?? 0)} onValueChange={(value) => update("reminderMinutes", Number(value))}><SelectTrigger className="h-11 w-full border-white/12 bg-[#0b192c] text-white"><SelectValue /></SelectTrigger><SelectContent className="border-white/12 bg-[#0b192c] text-slate-100"><SelectItem value="0">At due time</SelectItem><SelectItem value="10">10 minutes before</SelectItem><SelectItem value="30">30 minutes before</SelectItem><SelectItem value="60">1 hour before</SelectItem><SelectItem value="1440">1 day before</SelectItem></SelectContent></Select></div>
+              <div className="grid gap-2"><Label>Alarm mode</Label><Select disabled={!draft.dueAt} value={draft.dueAt ? draft.alarmMode : "none"} onValueChange={(value) => { const mode = value as AlarmMode; update("alarmMode", mode); update("reminderMinutes", mode === "none" ? null : (draft.reminderMinutes ?? 0)); }}><SelectTrigger aria-label="Alarm mode" className="h-11 w-full border-white/12 bg-[#0b192c] text-white"><SelectValue /></SelectTrigger><SelectContent className="border-white/12 bg-[#0b192c] text-slate-100"><SelectItem value="none">No alarm</SelectItem><SelectItem value="gentle">Gentle reminder</SelectItem><SelectItem value="strict">Strict until done</SelectItem></SelectContent></Select></div>
+              <div className="grid gap-2"><Label>When</Label><Select disabled={!draft.dueAt || draft.alarmMode === "none"} value={String(draft.reminderMinutes ?? 0)} onValueChange={(value) => update("reminderMinutes", Number(value))}><SelectTrigger aria-label="Alarm timing" className="h-11 w-full border-white/12 bg-[#0b192c] text-white"><SelectValue /></SelectTrigger><SelectContent className="border-white/12 bg-[#0b192c] text-slate-100"><SelectItem value="0">At due time</SelectItem><SelectItem value="10">10 minutes before</SelectItem><SelectItem value="30">30 minutes before</SelectItem><SelectItem value="60">1 hour before</SelectItem><SelectItem value="1440">1 day before</SelectItem></SelectContent></Select></div>
               {draft.alarmMode === "strict" && <p className="flex gap-2 text-[11px] leading-5 text-rose-100/75 sm:col-span-2"><AlarmClock className="mt-0.5 size-4 shrink-0 text-rose-300" />Strict mode stays in your face until you complete a written check-in. The Android app also posts persistent OS alarms when the app is closed.</p>}
             </div>
           </div>

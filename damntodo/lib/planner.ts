@@ -199,22 +199,27 @@ export function createDistributedGoal(draft: TaskDraft, tasks: Task[], settings:
       .map((candidate, dayIndex) => ({ candidate, distance: Math.abs(dayIndex - ideal), dayIndex }))
       .filter(({ candidate }) => candidate.load + duration <= capacity)
       .sort((a, b) => a.distance - b.distance || a.candidate.load - b.candidate.load || a.dayIndex - b.dayIndex)[0]?.candidate;
-    if (!day) { overflow += 1; return; }
-    const scheduled = atTime(day.date, settings.dayStart);
-    scheduled.setMinutes(scheduled.getMinutes() + day.load);
-    day.load += duration;
+    let scheduledAt: string | null = null;
+    if (!day) {
+      overflow += 1;
+    } else {
+      const scheduled = atTime(day.date, settings.dayStart);
+      scheduled.setMinutes(scheduled.getMinutes() + day.load);
+      day.load += duration;
+      scheduledAt = toLocalInput(scheduled);
+    }
     created.push({
       id: crypto.randomUUID(),
       title: draft.title.trim(),
       notes: draft.notes.trim(),
-      status: "scheduled",
+      status: scheduledAt ? "scheduled" : "backlog",
       priority: draft.priority,
       duration,
       dueAt: draft.dueAt,
-      scheduledAt: toLocalInput(scheduled),
-      reminderMinutes: draft.reminderMinutes,
+      scheduledAt,
+      reminderMinutes: scheduledAt ? draft.reminderMinutes : null,
       remindedFor: null,
-      alarmMode: draft.alarmMode,
+      alarmMode: scheduledAt ? draft.alarmMode : "none",
       snoozedUntil: null,
       goalId,
       sessionIndex: index + 1,

@@ -26,7 +26,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { type FormEvent, type MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, type MouseEvent, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import skyDawn from "@/public/sky-dawn.webp";
 import logoMark from "@/public/logo-mark.png";
 import { TaskEditor } from "@/components/task-editor";
@@ -105,7 +105,7 @@ export default function PlannerApp() {
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [installInfoOpen, setInstallInfoOpen] = useState(false);
   const [installed, setInstalled] = useState(false);
-  const [native, setNative] = useState(false);
+  const native = useSyncExternalStore(() => () => undefined, isNativeApp, () => false);
   const [activeAlarmId, setActiveAlarmId] = useState<string | null>(null);
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>("default");
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -136,7 +136,8 @@ export default function PlannerApp() {
 
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
-    navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+    if (process.env.NODE_ENV === "production") navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+    else navigator.serviceWorker.getRegistrations().then((registrations) => Promise.all(registrations.map((registration) => registration.unregister()))).catch(() => undefined);
     const onInstallPrompt = (event: Event) => {
       event.preventDefault();
       setInstallPrompt(event as BeforeInstallPromptEvent);
@@ -161,8 +162,7 @@ export default function PlannerApp() {
   }, [announce]);
 
   useEffect(() => {
-    setNative(isNativeApp());
-    let stop = () => undefined;
+    let stop: () => void = () => undefined;
     void listenForNativeAlarm((taskId) => setActiveAlarmId(taskId)).then((dispose) => { stop = dispose; });
     return () => stop();
   }, []);
@@ -281,12 +281,16 @@ export default function PlannerApp() {
   };
 
   const scheduleAlarm = async (task: Task) => {
-    if (!task.dueAt || task.alarmMode === "none") { await cancelNativeTaskAlarm(task.id); return; }
-    if (isNativeApp()) {
-      const permission = await prepareNativeAlarms(task.alarmMode === "strict");
-      if (!permission.granted) { announce("Alarm permission is still off in Android settings."); return; }
-      await scheduleNativeTaskAlarm(task);
-      if (task.alarmMode === "strict" && !permission.exact) announce("Android will use an inexact alarm until Alarms & reminders is allowed.");
+    try {
+      if (!task.dueAt || task.alarmMode === "none") { await cancelNativeTaskAlarm(task.id); return; }
+      if (isNativeApp()) {
+        const permission = await prepareNativeAlarms(task.alarmMode === "strict");
+        if (!permission.granted) { announce("Alarm permission is still off in Android settings."); return; }
+        await scheduleNativeTaskAlarm(task);
+        if (task.alarmMode === "strict" && !permission.exact) announce("Android will use an inexact alarm until Alarms & reminders is allowed.");
+      }
+    } catch {
+      announce("The task was saved, but Android could not schedule its alarm yet.");
     }
   };
 
@@ -379,7 +383,7 @@ export default function PlannerApp() {
     }
     await installPrompt.prompt();
     const choice = await installPrompt.userChoice;
-    if (choice.outcome === "dismissed") announce("Install cancelled — everything still works in this tab.");
+    if (choice.outcome === "dismissed") announce("Install cancelled. Everything still works in this tab.");
     setInstallPrompt(null);
     setInstallInfoOpen(false);
   };
@@ -441,7 +445,7 @@ export default function PlannerApp() {
   };
 
   const currentTitle = view === "today" ? "Your day, clearly." : view === "schedule" ? "A week that fits." : view === "backlog" ? "Everything, captured." : "Progress worth seeing.";
-  const currentKicker = view === "today" ? formatDayHeading(new Date()) : view === "schedule" ? "Balanced automatically — editable always" : view === "backlog" ? `${backlog.length} task${backlog.length === 1 ? "" : "s"} waiting for a place` : `${completed.length} completed task${completed.length === 1 ? "" : "s"}`;
+  const currentKicker = view === "today" ? formatDayHeading(new Date()) : view === "schedule" ? "Balanced automatically, editable always" : view === "backlog" ? `${backlog.length} task${backlog.length === 1 ? "" : "s"} waiting for a place` : `${completed.length} completed task${completed.length === 1 ? "" : "s"}`;
 
   return (
     <main className="app-frame">
@@ -665,16 +669,23 @@ function TodayView({ tasks, overdue, focusTask, totalMinutes, backlog, quickTitl
 function ScheduleView({ tasks, backlog, settings, onEdit, onToggle, onDelete, onBacklog, onAdd, onPlan }: {
   tasks: Task[]; backlog: Task[]; settings: PlannerSettings; onEdit: (task: Task) => void; onToggle: (task: Task) => void; onDelete: (task: Task) => void; onBacklog: (task: Task) => void; onAdd: (scheduledAt: string) => void; onPlan: () => void;
 }) {
-  const days = useMemo(() => Array.from({ length: 7 }, (_, index) => {
-    const date = new Date();
-    date.setHours(0, 0, 0, 0);
-    date.setDate(date.getDate() + index);
-    return date;
-  }), []);
+  const days = useMemo(() => {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    const latest = tasks
+      .filter((task) => task.status === "scheduled" && task.scheduledAt && new Date(task.scheduledAt) >= start)
+      .reduce((max, task) => Math.max(max, new Date(task.scheduledAt!).getTime()), start.getTime());
+    const span = Math.min(62, Math.max(7, Math.ceil((latest - start.getTime()) / 86_400_000) + 1));
+    return Array.from({ length: span }, (_, index) => {
+      const date = new Date(start);
+      date.setDate(date.getDate() + index);
+      return date;
+    });
+  }, [tasks]);
   return (
     <div className="schedule-layout">
       <section className="panel week-panel">
-        <div className="section-heading"><div><span className="eyebrow">Next seven days</span><h2>Balanced by time, not guesswork</h2></div><span className="soft-pill">{settings.dayStart}–{settings.dayEnd}</span></div>
+        <div className="section-heading"><div><span className="eyebrow">Next {days.length} days</span><h2>Balanced by time, not guesswork</h2></div><span className="soft-pill">{settings.dayStart} to {settings.dayEnd}</span></div>
         <div className="week-grid">
           {days.map((date, index) => {
             const dayTasks = tasks.filter((task) => task.status === "scheduled" && task.scheduledAt && dateKey(task.scheduledAt) === dateKey(date)).sort(taskSort);

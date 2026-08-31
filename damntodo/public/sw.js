@@ -30,6 +30,16 @@ self.addEventListener("fetch", (event) => {
     }).catch(() => caches.match("/")));
     return;
   }
+  if (new URL(event.request.url).pathname.startsWith("/_next/")) {
+    event.respondWith(fetch(event.request).then((response) => {
+      if (response.ok) {
+        const copy = response.clone();
+        caches.open(CACHE).then((cache) => cache.put(event.request, copy));
+      }
+      return response;
+    }).catch(() => caches.match(event.request)));
+    return;
+  }
   event.respondWith(caches.match(event.request).then((cached) => cached || fetch(event.request).then((response) => {
     if (response.ok) {
       const copy = response.clone();

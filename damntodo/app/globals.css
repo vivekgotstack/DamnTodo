@@ -144,7 +144,7 @@ p { color: var(--text-soft); line-height: 1.55; }
 .task-card.due-overdue::before { opacity: 1; background: var(--coral); box-shadow: 0 0 12px rgba(255, 145, 162, .55); }
 .task-card.due-soon::before { opacity: 1; background: var(--amber); box-shadow: 0 0 12px rgba(255, 199, 124, .4); }
 .task-card:hover { border-color: rgba(164, 194, 239, .24); background: rgba(255, 255, 255, .052); transform: translateX(2px); }
-.task-card:has(.is-complete) { animation: task-settle .35s ease both; }
+.task-card.is-complete { animation: task-settle .35s ease both; }
 @keyframes task-settle { 50% { transform: scale(.985); } }
 .task-check { display: grid; place-items: center; width: 23px; height: 23px; padding: 0; border: 1px solid rgba(184, 207, 242, .28); border-radius: 7px; cursor: pointer; color: transparent; background: rgba(255, 255, 255, .018); transition: .18s ease; }
 .task-check:hover { border-color: var(--blue); color: var(--blue); background: rgba(128, 176, 250, .08); }
@@ -391,7 +391,7 @@ input[type="date"], input[type="time"], input[type="datetime-local"] { color-sch
   .compact-grid .field:last-child { grid-column: 1 / -1; }
   .privacy-note { display: none; }
   .toast { right: 16px; bottom: calc(72px + env(safe-area-inset-bottom)); left: 16px; }
-  .task-editor-dialog { top: auto; bottom: 0; max-width: 100%; width: 100%; transform: translateX(-50%); border-radius: 24px 24px 0 0; }
+  .task-editor-dialog { top: auto; bottom: 0; max-width: 100%; width: 100%; translate: -50% 0; border-radius: 24px 24px 0 0; }
 }
 
 @media (hover: none) {
