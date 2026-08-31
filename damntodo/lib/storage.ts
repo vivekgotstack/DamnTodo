@@ -3,6 +3,7 @@ import { DEFAULT_STATE, type PlannerState, type Task } from "./planner";
 const DB_NAME = "damntodo-offline";
 const STORE_NAME = "planner";
 const STATE_KEY = "state-v2";
+const FALLBACK_KEY = "damntodo-state-v2";
 
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -19,6 +20,7 @@ function openDatabase(): Promise<IDBDatabase> {
 
 export async function loadState(): Promise<PlannerState> {
   try {
+    if (typeof indexedDB === "undefined") return readFallbackState();
     const db = await openDatabase();
     const stored = await new Promise<PlannerState | undefined>((resolve, reject) => {
       const request = db.transaction(STORE_NAME, "readonly").objectStore(STORE_NAME).get(STATE_KEY);
@@ -36,17 +38,35 @@ export async function loadState(): Promise<PlannerState> {
   } catch (error) {
     console.error("Could not read offline planner data", error);
   }
-  return migrateLegacyTodos();
+  return readFallbackState();
 }
 
 export async function saveState(state: PlannerState) {
-  const db = await openDatabase();
-  await new Promise<void>((resolve, reject) => {
-    const request = db.transaction(STORE_NAME, "readwrite").objectStore(STORE_NAME).put(state, STATE_KEY);
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
-  });
-  db.close();
+  try {
+    if (typeof indexedDB === "undefined") throw new Error("IndexedDB unavailable");
+    const db = await openDatabase();
+    await new Promise<void>((resolve, reject) => {
+      const request = db.transaction(STORE_NAME, "readwrite").objectStore(STORE_NAME).put(state, STATE_KEY);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+    db.close();
+    localStorage.removeItem(FALLBACK_KEY);
+  } catch {
+    localStorage.setItem(FALLBACK_KEY, JSON.stringify(state));
+  }
+}
+
+function readFallbackState(): PlannerState {
+  try {
+    const raw = localStorage.getItem(FALLBACK_KEY);
+    if (!raw) return migrateLegacyTodos();
+    const stored = JSON.parse(raw) as PlannerState;
+    if (stored.version !== 2 || !Array.isArray(stored.tasks)) return migrateLegacyTodos();
+    return { ...DEFAULT_STATE, ...stored, settings: { ...DEFAULT_STATE.settings, ...stored.settings } };
+  } catch {
+    return migrateLegacyTodos();
+  }
 }
 
 function migrateLegacyTodos(): PlannerState {

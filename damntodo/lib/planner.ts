@@ -139,8 +139,9 @@ export function autoSchedule(tasks: Task[], settings: PlannerSettings) {
   const candidates: Array<{ date: Date; key: string; load: number; capacity: number }> = [];
   const cursor = new Date(now);
   cursor.setHours(0, 0, 0, 0);
+  let daysScanned = 0;
 
-  while (candidates.length < settings.planningDays && candidates.length < 31) {
+  while (candidates.length < settings.planningDays && daysScanned < 31) {
     if (settings.workDays.includes(cursor.getDay())) {
       const start = atTime(cursor, settings.dayStart);
       const end = atTime(cursor, settings.dayEnd);
@@ -157,6 +158,7 @@ export function autoSchedule(tasks: Task[], settings: PlannerSettings) {
       }
     }
     cursor.setDate(cursor.getDate() + 1);
+    daysScanned += 1;
   }
 
   for (const task of tasks.filter((item) => item.status === "scheduled" && item.scheduledAt)) {
@@ -232,8 +234,8 @@ export function formatDateTime(value: string) {
   const date = new Date(value);
   const today = isSameDay(value);
   const tomorrow = dateKey(date) === dateKey(new Date(Date.now() + 86_400_000));
-  const day = today ? "Today" : tomorrow ? "Tomorrow" : new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" }).format(date);
-  return `${day}, ${new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(date)}`;
+  const day = today ? "Today" : tomorrow ? "Tomorrow" : new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric" }).format(date);
+  return `${day}, ${new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit" }).format(date)}`;
 }
 
 export function formatDuration(minutes: number) {
