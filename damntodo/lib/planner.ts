@@ -1,5 +1,7 @@
 export type TaskStatus = "backlog" | "scheduled" | "completed";
 export type Priority = "low" | "medium" | "high";
+export type AlarmMode = "none" | "gentle" | "strict";
+export type DraftKind = "task" | "goal";
 
 export interface Task {
   id: string;
@@ -12,6 +14,12 @@ export interface Task {
   scheduledAt: string | null;
   reminderMinutes: number | null;
   remindedFor: string | null;
+  alarmMode?: AlarmMode;
+  snoozedUntil?: string | null;
+  goalId?: string | null;
+  sessionIndex?: number | null;
+  sessionCount?: number | null;
+  totalGoalMinutes?: number | null;
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
@@ -48,6 +56,7 @@ export const DEFAULT_STATE: PlannerState = {
 };
 
 export interface TaskDraft {
+  kind: DraftKind;
   title: string;
   notes: string;
   priority: Priority;
@@ -55,9 +64,14 @@ export interface TaskDraft {
   dueAt: string;
   scheduledAt: string;
   reminderMinutes: number | null;
+  alarmMode: AlarmMode;
+  availableFrom: string;
+  totalDuration: number;
+  maxSessionDuration: number;
 }
 
 export const emptyDraft = (duration = 30): TaskDraft => ({
+  kind: "task",
   title: "",
   notes: "",
   priority: "medium",
@@ -65,6 +79,10 @@ export const emptyDraft = (duration = 30): TaskDraft => ({
   dueAt: "",
   scheduledAt: "",
   reminderMinutes: 30,
+  alarmMode: "gentle",
+  availableFrom: toLocalInput(new Date()).slice(0, 10),
+  totalDuration: 300,
+  maxSessionDuration: 60,
 });
 
 export function createTask(draft: TaskDraft): Task {
@@ -80,6 +98,12 @@ export function createTask(draft: TaskDraft): Task {
     scheduledAt: draft.scheduledAt || null,
     reminderMinutes: draft.dueAt ? draft.reminderMinutes : null,
     remindedFor: null,
+    alarmMode: draft.dueAt ? draft.alarmMode : "none",
+    snoozedUntil: null,
+    goalId: null,
+    sessionIndex: null,
+    sessionCount: null,
+    totalGoalMinutes: null,
     createdAt: now,
     updatedAt: now,
     completedAt: null,
@@ -88,6 +112,7 @@ export function createTask(draft: TaskDraft): Task {
 
 export function draftFromTask(task: Task): TaskDraft {
   return {
+    kind: "task",
     title: task.title,
     notes: task.notes,
     priority: task.priority,
@@ -95,6 +120,10 @@ export function draftFromTask(task: Task): TaskDraft {
     dueAt: task.dueAt ?? "",
     scheduledAt: task.scheduledAt ?? "",
     reminderMinutes: task.reminderMinutes,
+    alarmMode: task.alarmMode ?? (task.reminderMinutes === null ? "none" : "gentle"),
+    availableFrom: (task.scheduledAt ?? task.createdAt).slice(0, 10),
+    totalDuration: task.totalGoalMinutes ?? task.duration,
+    maxSessionDuration: task.duration,
   };
 }
 
@@ -122,6 +151,81 @@ function dateKey(value: Date | string) {
 
 function priorityWeight(priority: Priority) {
   return priority === "high" ? 0 : priority === "medium" ? 1 : 2;
+}
+
+function distributeMinutes(total: number, maxPerSession: number) {
+  const safeTotal = Math.max(1, Math.round(total));
+  const safeMax = Math.max(1, Math.round(maxPerSession));
+  const sessionCount = Math.ceil(safeTotal / safeMax);
+  const base = Math.floor(safeTotal / sessionCount);
+  const remainder = safeTotal % sessionCount;
+  return Array.from({ length: sessionCount }, (_, index) => base + (index < remainder ? 1 : 0));
+}
+
+/** Creates exact-total sessions spread over the whole requested date range. */
+export function createDistributedGoal(draft: TaskDraft, tasks: Task[], settings: PlannerSettings) {
+  if (!draft.dueAt) return { tasks: [] as Task[], overflow: 0, error: "Choose a deadline first." };
+  const start = new Date(`${draft.availableFrom}T00:00:00`);
+  const deadline = new Date(draft.dueAt);
+  if (Number.isNaN(start.getTime()) || deadline.getTime() < start.getTime()) {
+    return { tasks: [] as Task[], overflow: 0, error: "The deadline must be after the start date." };
+  }
+
+  const dayStartParts = timeParts(settings.dayStart);
+  const dayEndParts = timeParts(settings.dayEnd);
+  const capacity = Math.max(0, (dayEndParts.hours * 60 + dayEndParts.minutes) - (dayStartParts.hours * 60 + dayStartParts.minutes));
+  const durations = distributeMinutes(draft.totalDuration, Math.min(draft.maxSessionDuration, Math.max(1, capacity)));
+  const days: Array<{ date: Date; key: string; load: number }> = [];
+  const cursor = new Date(start);
+  for (let scanned = 0; cursor <= deadline && scanned < 740; scanned += 1) {
+    if (settings.workDays.includes(cursor.getDay())) {
+      const key = dateKey(cursor);
+      const load = tasks
+        .filter((task) => task.status === "scheduled" && task.scheduledAt && dateKey(task.scheduledAt) === key)
+        .reduce((sum, task) => sum + task.duration, 0);
+      days.push({ date: new Date(cursor), key, load });
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  if (!days.length || !capacity) return { tasks: [] as Task[], overflow: durations.length, error: "No working time exists in that date range." };
+
+  const now = new Date().toISOString();
+  const goalId = crypto.randomUUID();
+  const created: Task[] = [];
+  let overflow = 0;
+  durations.forEach((duration, index) => {
+    const ideal = durations.length === 1 ? 0 : Math.round(index * (days.length - 1) / (durations.length - 1));
+    const day = days
+      .map((candidate, dayIndex) => ({ candidate, distance: Math.abs(dayIndex - ideal), dayIndex }))
+      .filter(({ candidate }) => candidate.load + duration <= capacity)
+      .sort((a, b) => a.distance - b.distance || a.candidate.load - b.candidate.load || a.dayIndex - b.dayIndex)[0]?.candidate;
+    if (!day) { overflow += 1; return; }
+    const scheduled = atTime(day.date, settings.dayStart);
+    scheduled.setMinutes(scheduled.getMinutes() + day.load);
+    day.load += duration;
+    created.push({
+      id: crypto.randomUUID(),
+      title: draft.title.trim(),
+      notes: draft.notes.trim(),
+      status: "scheduled",
+      priority: draft.priority,
+      duration,
+      dueAt: draft.dueAt,
+      scheduledAt: toLocalInput(scheduled),
+      reminderMinutes: draft.reminderMinutes,
+      remindedFor: null,
+      alarmMode: draft.alarmMode,
+      snoozedUntil: null,
+      goalId,
+      sessionIndex: index + 1,
+      sessionCount: durations.length,
+      totalGoalMinutes: draft.totalDuration,
+      createdAt: now,
+      updatedAt: now,
+      completedAt: null,
+    });
+  });
+  return { tasks: created, overflow, error: null as string | null };
 }
 
 export function autoSchedule(tasks: Task[], settings: PlannerSettings) {

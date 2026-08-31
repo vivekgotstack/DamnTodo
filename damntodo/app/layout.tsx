@@ -1,10 +1,11 @@
 import type { Metadata, Viewport } from "next";
 import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "DamnTodo — Clear the noise",
+  title: "DamnTodo",
   description: "A calm, private, offline planner that turns your backlog into a realistic schedule.",
   applicationName: "DamnTodo",
   manifest: "/manifest.webmanifest",
@@ -25,8 +26,8 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`}>
-      <body>{children}</body>
+    <html lang="en" className={`dark ${GeistSans.variable} ${GeistMono.variable}`}>
+      <body><TooltipProvider>{children}</TooltipProvider></body>
     </html>
   );
 }

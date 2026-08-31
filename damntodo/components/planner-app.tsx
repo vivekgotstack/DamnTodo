@@ -27,12 +27,16 @@ import {
   X,
 } from "lucide-react";
 import { type FormEvent, type MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import skyDawn from "@/public/sky-dawn.png";
+import skyDawn from "@/public/sky-dawn.webp";
+import logoMark from "@/public/logo-mark.png";
+import { TaskEditor } from "@/components/task-editor";
+import { InstallDialog, StrictAlarmDialog } from "@/components/system-dialogs";
+import { ShimmerButton } from "@/components/ui/shimmer-button";
 import {
   DEFAULT_STATE,
   autoSchedule,
   createTask,
-  draftFromTask,
+  createDistributedGoal,
   dueState,
   emptyDraft,
   formatDateTime,
@@ -42,11 +46,11 @@ import {
   scheduleToday,
   type PlannerSettings,
   type PlannerState,
-  type Priority,
   type Task,
   type TaskDraft,
 } from "@/lib/planner";
 import { loadState, saveState } from "@/lib/storage";
+import { cancelNativeTaskAlarm, isNativeApp, listenForNativeAlarm, prepareNativeAlarms, scheduleNativeTaskAlarm } from "@/lib/native-alarms";
 
 type View = "today" | "schedule" | "backlog" | "completed";
 
@@ -99,7 +103,10 @@ export default function PlannerApp() {
   const [toast, setToast] = useState<string | null>(null);
   const [quickTitle, setQuickTitle] = useState("");
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [installInfoOpen, setInstallInfoOpen] = useState(false);
   const [installed, setInstalled] = useState(false);
+  const [native, setNative] = useState(false);
+  const [activeAlarmId, setActiveAlarmId] = useState<string | null>(null);
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>("default");
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -153,6 +160,13 @@ export default function PlannerApp() {
     };
   }, [announce]);
 
+  useEffect(() => {
+    setNative(isNativeApp());
+    let stop = () => undefined;
+    void listenForNativeAlarm((taskId) => setActiveAlarmId(taskId)).then((dispose) => { stop = dispose; });
+    return () => stop();
+  }, []);
+
   const playReminderTone = useCallback(() => {
     if (!state.settings.sound) return;
     const AudioContextClass = window.AudioContext;
@@ -171,13 +185,21 @@ export default function PlannerApp() {
   }, [state.settings.sound]);
 
   useEffect(() => {
+    if (!activeAlarmId) return;
+    playReminderTone();
+    const repeat = setInterval(playReminderTone, 12_000);
+    return () => clearInterval(repeat);
+  }, [activeAlarmId, playReminderTone]);
+
+  useEffect(() => {
     if (!ready) return;
     const checkReminders = async () => {
       const now = Date.now();
       const due = state.tasks.filter((task) => {
-        if (task.status === "completed" || !task.dueAt || task.reminderMinutes === null) return false;
-        const reminderKey = `${task.dueAt}:${task.reminderMinutes}`;
-        const triggerAt = new Date(task.dueAt).getTime() - task.reminderMinutes * 60_000;
+        const alarmAt = task.goalId && task.scheduledAt ? task.scheduledAt : task.dueAt;
+        if (task.status === "completed" || !alarmAt || task.reminderMinutes === null || task.alarmMode === "none") return false;
+        const reminderKey = `${alarmAt}:${task.reminderMinutes}:${task.snoozedUntil ?? ""}`;
+        const triggerAt = task.snoozedUntil ? new Date(task.snoozedUntil).getTime() : new Date(alarmAt).getTime() - task.reminderMinutes * 60_000;
         return triggerAt <= now && task.remindedFor !== reminderKey;
       });
       if (!due.length) return;
@@ -185,17 +207,19 @@ export default function PlannerApp() {
         const body = task.dueAt ? `Due ${formatDateTime(task.dueAt)} · ${formatDuration(task.duration)}` : "Task reminder";
         if (Notification.permission === "granted") {
           const registration = await navigator.serviceWorker?.ready;
-          if (registration) await registration.showNotification(task.title, { body, icon: "/icon.svg", badge: "/icon.svg", tag: task.id });
-          else new Notification(task.title, { body, icon: "/icon.svg", tag: task.id });
+          if (registration) await registration.showNotification(task.title, { body, icon: "/icon-192.png", badge: "/icon-192.png", tag: task.id });
+          else new Notification(task.title, { body, icon: "/icon-192.png", tag: task.id });
         }
         playReminderTone();
         announce(`Reminder: ${task.title}`);
+        if (task.alarmMode === "strict") setActiveAlarmId(task.id);
       }
       setState((current) => ({
         ...current,
         tasks: current.tasks.map((task) => {
           const fired = due.find((item) => item.id === task.id);
-          return fired ? { ...task, remindedFor: `${fired.dueAt}:${fired.reminderMinutes}` } : task;
+          const alarmAt = fired?.goalId && fired.scheduledAt ? fired.scheduledAt : fired?.dueAt;
+          return fired ? { ...task, remindedFor: `${alarmAt}:${fired.reminderMinutes}:${fired.snoozedUntil ?? ""}` } : task;
         }),
       }));
     };
@@ -215,28 +239,55 @@ export default function PlannerApp() {
   const todayMinutes = todayTasks.reduce((total, task) => total + task.duration, 0);
   const focusTask = todayTasks[0] ?? overdue[0] ?? null;
 
-  const saveTask = (draft: TaskDraft) => {
+  const saveTask = async (draft: TaskDraft) => {
     if (editor?.task) {
+      const previous = editor.task;
+      const updated: Task = {
+        ...previous,
+        title: draft.title.trim(),
+        notes: draft.notes.trim(),
+        priority: draft.priority,
+        duration: draft.duration,
+        dueAt: draft.dueAt || null,
+        scheduledAt: draft.scheduledAt || null,
+        reminderMinutes: draft.dueAt ? draft.reminderMinutes : null,
+        alarmMode: draft.dueAt ? draft.alarmMode : "none",
+        remindedFor: previous.dueAt === draft.dueAt && previous.reminderMinutes === draft.reminderMinutes ? previous.remindedFor : null,
+        status: draft.scheduledAt ? "scheduled" : previous.status === "completed" ? "completed" : "backlog",
+        updatedAt: new Date().toISOString(),
+      };
       setState((current) => ({
         ...current,
-        tasks: current.tasks.map((task) => task.id === editor.task!.id ? {
-          ...task,
-          ...draft,
-          dueAt: draft.dueAt || null,
-          scheduledAt: draft.scheduledAt || null,
-          reminderMinutes: draft.dueAt ? draft.reminderMinutes : null,
-          remindedFor: task.dueAt === draft.dueAt && task.reminderMinutes === draft.reminderMinutes ? task.remindedFor : null,
-          status: draft.scheduledAt ? "scheduled" : task.status === "completed" ? "completed" : "backlog",
-          updatedAt: new Date().toISOString(),
-        } : task),
+        tasks: current.tasks.map((task) => task.id === previous.id ? updated : task),
       }));
+      await scheduleAlarm(updated);
       announce("Task updated.");
+    } else if (draft.kind === "goal") {
+      const result = createDistributedGoal(draft, state.tasks, state.settings);
+      if (result.error) { announce(result.error); return; }
+      setState((current) => ({ ...current, tasks: [...result.tasks, ...current.tasks] }));
+      await Promise.all(result.tasks.map(scheduleAlarm));
+      setView("schedule");
+      announce(result.overflow
+        ? `Created ${result.tasks.length} sessions. ${result.overflow} need more working hours.`
+        : `Distributed exactly ${formatDuration(draft.totalDuration)} into ${result.tasks.length} balanced sessions.`);
     } else {
       const task = createTask({ ...draft, scheduledAt: draft.scheduledAt || editor?.scheduledAt || "" });
       setState((current) => ({ ...current, tasks: [task, ...current.tasks] }));
+      await scheduleAlarm(task);
       announce(task.scheduledAt ? "Task added to your schedule." : "Task captured in your backlog.");
     }
     setEditor(null);
+  };
+
+  const scheduleAlarm = async (task: Task) => {
+    if (!task.dueAt || task.alarmMode === "none") { await cancelNativeTaskAlarm(task.id); return; }
+    if (isNativeApp()) {
+      const permission = await prepareNativeAlarms(task.alarmMode === "strict");
+      if (!permission.granted) { announce("Alarm permission is still off in Android settings."); return; }
+      await scheduleNativeTaskAlarm(task);
+      if (task.alarmMode === "strict" && !permission.exact) announce("Android will use an inexact alarm until Alarms & reminders is allowed.");
+    }
   };
 
   const toggleComplete = (task: Task) => {
@@ -250,12 +301,14 @@ export default function PlannerApp() {
         updatedAt: new Date().toISOString(),
       } : item),
     }));
+    if (completing) void cancelNativeTaskAlarm(task.id);
     announce(completing ? "Nicely done." : "Task restored.");
   };
 
   const removeTask = (task: Task) => {
     if (!window.confirm(`Delete “${task.title}”? This cannot be undone.`)) return;
     setState((current) => ({ ...current, tasks: current.tasks.filter((item) => item.id !== task.id) }));
+    void cancelNativeTaskAlarm(task.id);
     announce("Task deleted.");
   };
 
@@ -301,6 +354,11 @@ export default function PlannerApp() {
   };
 
   const enableNotifications = async () => {
+    if (isNativeApp()) {
+      const result = await prepareNativeAlarms(true);
+      announce(result.granted ? "Android alarms are enabled." : "Allow notifications in Android settings to use alarms.");
+      return;
+    }
     if (!("Notification" in window)) {
       announce("This browser does not support notifications.");
       return;
@@ -323,6 +381,34 @@ export default function PlannerApp() {
     const choice = await installPrompt.userChoice;
     if (choice.outcome === "dismissed") announce("Install cancelled — everything still works in this tab.");
     setInstallPrompt(null);
+    setInstallInfoOpen(false);
+  };
+
+  const completeStrictAlarm = (note: string) => {
+    if (!activeAlarmId) return;
+    const task = state.tasks.find((item) => item.id === activeAlarmId);
+    if (!task) return;
+    setState((current) => ({
+      ...current,
+      tasks: current.tasks.map((item) => item.id === task.id ? {
+        ...item,
+        notes: `${item.notes}${item.notes ? "\n\n" : ""}Completion check-in: ${note}`,
+        status: "completed",
+        completedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      } : item),
+    }));
+    void cancelNativeTaskAlarm(task.id);
+    setActiveAlarmId(null);
+    announce("Checked in and completed. That one counts.");
+  };
+
+  const snoozeStrictAlarm = () => {
+    if (!activeAlarmId) return;
+    const snoozedUntil = new Date(Date.now() + 10 * 60_000).toISOString();
+    setState((current) => ({ ...current, tasks: current.tasks.map((task) => task.id === activeAlarmId ? { ...task, snoozedUntil, remindedFor: null } : task) }));
+    setActiveAlarmId(null);
+    announce("Strict alarm snoozed for 10 minutes.");
   };
 
   const exportBackup = () => {
@@ -364,7 +450,7 @@ export default function PlannerApp() {
       <section className={`workspace ${ready ? "is-ready" : ""}`}>
         <aside className="sidebar">
           <button className="brand" onClick={() => setView("today")} aria-label="Open today">
-            <span className="brand-orb"><Sparkles size={16} /></span>
+            <span className="brand-orb"><Image src={logoMark} alt="" width={26} height={26} /></span>
             <span className="brand-name">DamnTodo</span>
           </button>
           <nav className="main-nav" aria-label="Planner views">
@@ -379,7 +465,7 @@ export default function PlannerApp() {
             })}
           </nav>
           <div className="sidebar-bottom">
-            <button className="side-action" onClick={installApp}><Install size={17} /><span>{installed ? "Installed" : "Install app"}</span></button>
+            <ShimmerButton onClick={() => setInstallInfoOpen(true)} background="rgba(108, 159, 234, .12)" shimmerColor="#d8eaff" borderRadius="12px" className="install-side-cta"><Install size={17} /><span>{native ? "Android app" : installed ? "Installed" : "Install app"}</span></ShimmerButton>
             <button className="side-action" onClick={() => setSettingsOpen(true)}><Settings size={17} /><span>Settings</span></button>
             <div className="offline-status"><span className="status-dot" /><span>Private &amp; offline</span></div>
           </div>
@@ -389,6 +475,7 @@ export default function PlannerApp() {
           <header className="topbar">
             <div className="title-block"><span className="eyebrow">{currentKicker}</span><h1>{currentTitle}</h1></div>
             <div className="top-actions">
+              {!installed && !native && <ShimmerButton onClick={() => setInstallInfoOpen(true)} background="rgba(108, 159, 234, .14)" shimmerColor="#d8eaff" borderRadius="12px" className="mobile-install-cta" aria-label="Install DamnTodo"><Download size={17} /></ShimmerButton>}
               {backlog.length > 0 && <button className="button button-quiet plan-button" onClick={planBacklog}><Sparkles size={16} /> <span>Plan backlog</span></button>}
               <button className="button button-primary" onClick={() => setEditor({ task: null })}><Plus size={18} /> <span>New task</span></button>
             </div>
@@ -461,14 +548,19 @@ export default function PlannerApp() {
           settings={state.settings}
           notificationPermission={notificationPermission}
           installed={installed}
+          native={native}
           onChange={(settings) => setState((current) => ({ ...current, settings }))}
           onClose={() => setSettingsOpen(false)}
           onEnableNotifications={enableNotifications}
-          onInstall={installApp}
+          onInstall={() => { setSettingsOpen(false); setInstallInfoOpen(true); }}
           onExport={exportBackup}
           onImport={importBackup}
           onClear={clearAll}
         />
+      )}
+      <InstallDialog open={installInfoOpen} installed={installed} native={native} onClose={() => setInstallInfoOpen(false)} onInstall={() => void installApp()} />
+      {activeAlarmId && state.tasks.find((task) => task.id === activeAlarmId) && (
+        <StrictAlarmDialog task={state.tasks.find((task) => task.id === activeAlarmId)!} onComplete={completeStrictAlarm} onSnooze={snoozeStrictAlarm} />
       )}
       {toast && <div className="toast" role="status"><Check size={16} />{toast}</div>}
     </main>
@@ -478,7 +570,7 @@ export default function PlannerApp() {
 function LoadingSurface() {
   return (
     <section className="loading-surface" aria-label="Loading your offline planner">
-      <span className="loading-orb"><Sparkles size={20} /></span>
+      <span className="loading-orb"><Image src={logoMark} alt="" width={30} height={30} /></span>
       <div><strong>Opening your planner</strong><span>Everything stays on this device.</span></div>
     </section>
   );
@@ -504,6 +596,7 @@ function TaskCard({ task, compact = false, ...actions }: { task: Task; compact?:
         <span className="task-meta">
           <span><Clock3 size={12} />{formatDuration(task.duration)}</span>
           {task.scheduledAt && <span>{formatDateTime(task.scheduledAt)}</span>}
+          {task.goalId && task.sessionIndex && task.sessionCount && <span className="session-label">Session {task.sessionIndex}/{task.sessionCount}</span>}
           {task.dueAt && <span className={`due-label ${due}`}>{due === "overdue" ? "Overdue · " : due === "soon" ? "Due soon · " : "Due · "}{formatDateTime(task.dueAt)}</span>}
         </span>
       </button>
@@ -645,35 +738,7 @@ function ModalShell({ children, titleId, onClose, wide = false }: { children: Re
   return <div className="modal-backdrop" onMouseDown={onBackdrop}><div ref={panelRef} className={`modal-panel ${wide ? "wide" : ""}`} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}>{children}</div></div>;
 }
 
-function TaskEditor({ task, initialScheduledAt, defaultDuration, onClose, onSave }: { task: Task | null; initialScheduledAt?: string; defaultDuration: number; onClose: () => void; onSave: (draft: TaskDraft) => void }) {
-  const [draft, setDraft] = useState<TaskDraft>(() => task ? draftFromTask(task) : { ...emptyDraft(defaultDuration), scheduledAt: initialScheduledAt ?? "" });
-  const update = <K extends keyof TaskDraft>(key: K, value: TaskDraft[K]) => setDraft((current) => ({ ...current, [key]: value }));
-  const submit = (event: FormEvent) => { event.preventDefault(); if (draft.title.trim()) onSave(draft); };
-  return (
-    <ModalShell titleId="task-editor-title" onClose={onClose} wide>
-      <form className="editor-form" onSubmit={submit}>
-        <header className="modal-header"><div><span className="eyebrow">{task ? "Edit task" : "Clear capture"}</span><h2 id="task-editor-title">{task ? "Make the task fit." : "What needs doing?"}</h2></div><button type="button" className="close-button" onClick={onClose} aria-label="Close editor"><X size={20} /></button></header>
-        <div className="editor-body">
-          <label className="field title-field"><span>Task</span><textarea autoFocus rows={2} value={draft.title} onChange={(event) => update("title", event.target.value)} placeholder="A clear, specific next step…" required maxLength={180} /></label>
-          <label className="field"><span>Notes <em>optional</em></span><textarea rows={5} value={draft.notes} onChange={(event) => update("notes", event.target.value)} placeholder="Context, links, or the definition of done…" /></label>
-          <div className="form-grid three">
-            <label className="field"><span>Duration</span><select value={draft.duration} onChange={(event) => update("duration", Number(event.target.value))}>{[15, 25, 30, 45, 60, 90, 120, 180].map((minutes) => <option key={minutes} value={minutes}>{formatDuration(minutes)}</option>)}</select></label>
-            <fieldset className="field segmented-field"><legend>Priority</legend><div className="segmented">{(["low", "medium", "high"] as Priority[]).map((priority) => <button type="button" key={priority} className={draft.priority === priority ? "active" : ""} onClick={() => update("priority", priority)}>{priority}</button>)}</div></fieldset>
-            <label className="field"><span>Due</span><input type="datetime-local" value={draft.dueAt} min={task ? undefined : localDateTime()} onChange={(event) => update("dueAt", event.target.value)} /></label>
-          </div>
-          <div className="form-grid two">
-            <label className="field"><span>Schedule <em>optional</em></span><input type="datetime-local" value={draft.scheduledAt} onChange={(event) => update("scheduledAt", event.target.value)} /></label>
-            <label className={`field ${!draft.dueAt ? "disabled-field" : ""}`}><span>Reminder</span><select disabled={!draft.dueAt} value={draft.reminderMinutes ?? "none"} onChange={(event) => update("reminderMinutes", event.target.value === "none" ? null : Number(event.target.value))}><option value="none">No reminder</option><option value={0}>At due time</option><option value={10}>10 minutes before</option><option value={30}>30 minutes before</option><option value={60}>1 hour before</option><option value={1440}>1 day before</option></select></label>
-          </div>
-          <div className="editor-hint"><Sparkles size={16} /><span>Leave Schedule empty to keep this in your backlog. Auto-plan can place it later.</span></div>
-        </div>
-        <footer className="modal-footer"><button type="button" className="button button-quiet" onClick={onClose}>Cancel</button><button type="submit" className="button button-primary" disabled={!draft.title.trim()}>{task ? "Save changes" : draft.scheduledAt ? "Add to schedule" : "Add to backlog"}<ChevronRight size={16} /></button></footer>
-      </form>
-    </ModalShell>
-  );
-}
-
-function SettingsPanel({ settings, notificationPermission, installed, onChange, onClose, onEnableNotifications, onInstall, onExport, onImport, onClear }: { settings: PlannerSettings; notificationPermission: NotificationPermission; installed: boolean; onChange: (settings: PlannerSettings) => void; onClose: () => void; onEnableNotifications: () => void; onInstall: () => void; onExport: () => void; onImport: (file: File) => void; onClear: () => void }) {
+function SettingsPanel({ settings, notificationPermission, installed, native, onChange, onClose, onEnableNotifications, onInstall, onExport, onImport, onClear }: { settings: PlannerSettings; notificationPermission: NotificationPermission; installed: boolean; native: boolean; onChange: (settings: PlannerSettings) => void; onClose: () => void; onEnableNotifications: () => void; onInstall: () => void; onExport: () => void; onImport: (file: File) => void; onClear: () => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const toggleWorkDay = (day: number) => onChange({ ...settings, workDays: settings.workDays.includes(day) ? settings.workDays.filter((item) => item !== day) : [...settings.workDays, day] });
   return (
@@ -682,7 +747,7 @@ function SettingsPanel({ settings, notificationPermission, installed, onChange, 
         <header className="modal-header"><div><span className="eyebrow">Your system</span><h2 id="settings-title">Settings</h2></div><button className="close-button" onClick={onClose} aria-label="Close settings"><X size={20} /></button></header>
         <div className="settings-body">
           <section className="settings-section"><div className="settings-heading"><span className="settings-icon"><CalendarDays size={18} /></span><div><h3>Auto-schedule window</h3><p>Tasks are divided evenly across these days and hours.</p></div></div><div className="weekday-picker">{WEEKDAYS.map((day, index) => <button key={`${day.value}-${index}`} className={settings.workDays.includes(day.value) ? "active" : ""} onClick={() => toggleWorkDay(day.value)} aria-label={`Toggle ${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][day.value]}`}>{day.label}</button>)}</div><div className="form-grid three compact-grid"><label className="field"><span>Start</span><input type="time" value={settings.dayStart} onChange={(event) => onChange({ ...settings, dayStart: event.target.value })} /></label><label className="field"><span>Finish</span><input type="time" value={settings.dayEnd} onChange={(event) => onChange({ ...settings, dayEnd: event.target.value })} /></label><label className="field"><span>Plan ahead</span><select value={settings.planningDays} onChange={(event) => onChange({ ...settings, planningDays: Number(event.target.value) })}><option value={5}>5 workdays</option><option value={7}>7 workdays</option><option value={10}>10 workdays</option><option value={14}>14 workdays</option></select></label></div></section>
-          <section className="settings-section"><div className="settings-heading"><span className="settings-icon"><BellRing size={18} /></span><div><h3>Reminders</h3><p>Simple local alarms with no account or server.</p></div></div><div className="settings-row"><div><strong>{notificationPermission === "granted" ? "Notifications enabled" : "Notifications are off"}</strong><span>{notificationPermission === "granted" ? "Due reminders can appear while the app is running." : "Allow notifications to receive due reminders."}</span></div>{notificationPermission !== "granted" && <button className="button button-quiet" onClick={onEnableNotifications}><Bell size={15} /> Enable</button>}</div><label className="toggle-row"><div><strong>Reminder sound</strong><span>Play a gentle tone when a reminder fires.</span></div><input type="checkbox" checked={settings.sound} onChange={(event) => onChange({ ...settings, sound: event.target.checked })} /><i /></label><div className="honest-note"><CloudOff size={17} /><p><strong>Honest limitation:</strong> browser alarms cannot wake a fully closed app at an exact minute. DamnTodo checks missed reminders immediately when reopened. Keeping the installed app running gives the most reliable alerts.</p></div></section>
+          <section className="settings-section"><div className="settings-heading"><span className="settings-icon"><BellRing size={18} /></span><div><h3>Reminders</h3><p>Local alarms with no account or server.</p></div></div><div className="settings-row"><div><strong>{native ? "Android alarm system" : notificationPermission === "granted" ? "Notifications enabled" : "Notifications are off"}</strong><span>{native ? "Can notify outside the app after Android permissions are granted." : notificationPermission === "granted" ? "Due reminders can appear while the app is active." : "Allow notifications to receive due reminders."}</span></div>{(native || notificationPermission !== "granted") && <button className="button button-quiet" onClick={onEnableNotifications}><Bell size={15} /> {native ? "Configure" : "Enable"}</button>}</div><label className="toggle-row"><div><strong>Reminder sound</strong><span>Play a tone when an in-app reminder fires.</span></div><input type="checkbox" checked={settings.sound} onChange={(event) => onChange({ ...settings, sound: event.target.checked })} /><i /></label><div className="honest-note"><CloudOff size={17} /><p><strong>{native ? "Android path:" : "Browser limit:"}</strong> {native ? "Persistent exact local notifications work after the app is killed when Notifications and Alarms & reminders are allowed." : "A PWA cannot guarantee an exact alarm after the OS kills it. Missed reminders fire when DamnTodo opens again; use the included Android build for killed-app alarms."}</p></div></section>
           <section className="settings-section"><div className="settings-heading"><span className="settings-icon"><Install size={18} /></span><div><h3>App &amp; data</h3><p>Your tasks live only in this browser&apos;s private offline database.</p></div></div><div className="action-grid"><button className="settings-action" onClick={onInstall}><Install size={18} /><span><strong>{installed ? "App installed" : "Install DamnTodo"}</strong><small>{installed ? "Ready from your home screen" : "Use it like a native app"}</small></span><ChevronRight size={16} /></button><button className="settings-action" onClick={onExport}><Download size={18} /><span><strong>Download backup</strong><small>Save every task and setting</small></span><ChevronRight size={16} /></button><button className="settings-action" onClick={() => fileRef.current?.click()}><FileUp size={18} /><span><strong>Restore backup</strong><small>Import a DamnTodo JSON file</small></span><ChevronRight size={16} /></button></div><input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void onImport(file); event.target.value = ""; }} /><button className="danger-button" onClick={onClear}><Trash2 size={15} /> Clear every task</button></section>
         </div>
         <footer className="modal-footer"><span className="privacy-note"><span className="status-dot" /> No account · No cloud · No tracking</span><button className="button button-primary" onClick={onClose}>Done</button></footer>

@@ -1,8 +1,19 @@
-const CACHE = "damntodo-v2";
-const APP_SHELL = ["/", "/manifest.webmanifest", "/sky-dawn.png", "/icon.svg", "/icon-192.png", "/icon-512.png", "/icon-maskable-512.png"];
+const CACHE = "damntodo-v4";
+const APP_SHELL = ["/", "/manifest.webmanifest", "/sky-dawn.webp", "/logo-mark.png", "/icon-192.png", "/icon-512.png", "/icon-maskable-512.png"];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(APP_SHELL)).then(() => self.skipWaiting()));
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE);
+    await cache.addAll(APP_SHELL);
+    const response = await fetch("/");
+    const html = await response.clone().text();
+    const assets = [...html.matchAll(/(?:src|href)="([^"]+)"/g)]
+      .map((match) => match[1])
+      .filter((path) => path.startsWith("/_next/") || path.startsWith("/"));
+    await Promise.allSettled([...new Set(assets)].map((path) => cache.add(path)));
+    await cache.put("/", response);
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener("activate", (event) => {

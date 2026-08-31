@@ -4,7 +4,7 @@ export const dynamic = "force-static";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "DamnTodo — Clear the noise",
+    name: "DamnTodo",
     short_name: "DamnTodo",
     description: "A private, offline planner with backlog, due highlights, reminders, and automatic scheduling.",
     start_url: "/",
