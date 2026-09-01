@@ -728,8 +728,11 @@ input[type="date"], input[type="time"], input[type="datetime-local"] { color-sch
 .plan-item.is-complete span { color: var(--text-faint); text-decoration: line-through; }
 .plan-item-check { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 7px; cursor: pointer; color: var(--blue); background: rgba(115, 164, 239, .08); }
 .plan-empty { padding: 5px 0; color: var(--text-faint); font-size: 10px; }
-.plan-add-item { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 8px; border-top: 1px solid var(--line); color: var(--text-faint); }
-.plan-add-item input { flex: 1; height: 36px; font-size: 11px; }
+.plan-add-item { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; min-height: 42px; padding: 6px 0 0 8px; border-top: 1px solid var(--line); color: var(--text-faint); }
+.plan-add-item input { width: 100%; height: 36px; font-size: 11px; }
+.plan-add-item button { min-width: 52px; height: 32px; border-radius: 9px; cursor: pointer; color: #07111f; background: #b9d8ff; font-size: 10px; font-weight: 700; }
+.plan-add-item button:hover { background: #d6e9ff; }
+.plan-add-item button:disabled { cursor: not-allowed; opacity: .38; }
 
 @keyframes roadmap-arrive { from { opacity: 0; transform: translateY(10px) scale(.99); } to { opacity: 1; transform: translateY(0) scale(1); } }
 @keyframes red-line-pulse { 50% { opacity: .45; box-shadow: 0 0 8px rgba(255, 86, 126, .24); } }

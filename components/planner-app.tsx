@@ -1255,8 +1255,7 @@ function PlansView({ plans, onCreate, onUpdate, onDelete }: { plans: Plan[]; onC
   const [title, setTitle] = useState("");
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (!title.trim()) return;
-    onCreate(title);
+    onCreate(title.trim() || "Untitled checklist");
     setTitle("");
   };
   return (
@@ -1264,7 +1263,7 @@ function PlansView({ plans, onCreate, onUpdate, onDelete }: { plans: Plan[]; onC
       <form className="plan-create panel" onSubmit={submit}>
         <NotebookPen size={19} />
         <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Create a plan or checklist…" aria-label="New plan title" maxLength={140} />
-        <button className="button button-primary" type="submit" disabled={!title.trim()}><Plus size={16} />Create</button>
+        <button className="button button-primary" type="submit"><Plus size={16} />Create checklist</button>
       </form>
       <div className="plans-heading"><div><span className="eyebrow">Simple lists</span><h2>No schedules, alarms, or streak pressure</h2></div><span className="soft-pill"><LockKeyhole size={13} />Private on this device</span></div>
       {plans.length ? <div className="plans-grid">{plans.map((plan) => <PlanCard key={plan.id} plan={plan} onUpdate={onUpdate} onDelete={onDelete} />)}</div> : <EmptyState icon={NotebookPen} title="Create your first plan" body="Use plans for shopping lists, ideas, packing lists, or anything that should never trigger an alarm." />}
@@ -1283,12 +1282,12 @@ function PlanCard({ plan, onUpdate, onDelete }: { plan: Plan; onUpdate: (plan: P
   };
   return (
     <article className="plan-card">
-      <header><input className="plan-title-input" value={plan.title} onChange={(event) => onUpdate({ ...plan, title: event.target.value })} aria-label="Plan title" maxLength={140} /><button onClick={() => onDelete(plan)} aria-label={`Delete ${plan.title}`} title="Delete plan"><Trash2 size={15} /></button></header>
+      <header><input className="plan-title-input" value={plan.title} onChange={(event) => onUpdate({ ...plan, title: event.target.value })} aria-label="Plan title" maxLength={140} /><button type="button" onClick={() => onDelete(plan)} aria-label={`Delete ${plan.title}`} title="Delete plan"><Trash2 size={15} /></button></header>
       <div className="plan-items">
-        {plan.items.map((item) => <div className={`plan-item ${item.completed ? "is-complete" : ""}`} key={item.id}><button className="plan-item-check" onClick={() => onUpdate({ ...plan, items: plan.items.map((entry) => entry.id === item.id ? { ...entry, completed: !entry.completed } : entry) })} aria-pressed={item.completed} aria-label={`${item.completed ? "Restore" : "Complete"} ${item.text}`}>{item.completed ? <Check size={13} /> : <Circle size={14} />}</button><span>{item.text}</span><button className="plan-item-delete" onClick={() => onUpdate({ ...plan, items: plan.items.filter((entry) => entry.id !== item.id) })} aria-label={`Delete ${item.text}`}><X size={13} /></button></div>)}
+        {plan.items.map((item) => <div className={`plan-item ${item.completed ? "is-complete" : ""}`} key={item.id}><button type="button" className="plan-item-check" onClick={() => onUpdate({ ...plan, items: plan.items.map((entry) => entry.id === item.id ? { ...entry, completed: !entry.completed } : entry) })} aria-pressed={item.completed} aria-label={`${item.completed ? "Restore" : "Complete"} ${item.text}`}>{item.completed ? <Check size={13} /> : <Circle size={14} />}</button><span>{item.text}</span><button type="button" className="plan-item-delete" onClick={() => onUpdate({ ...plan, items: plan.items.filter((entry) => entry.id !== item.id) })} aria-label={`Delete ${item.text}`}><X size={13} /></button></div>)}
         {!plan.items.length && <p className="plan-empty">Add the first checklist item.</p>}
       </div>
-      <form className="plan-add-item" onSubmit={addItem}><Plus size={14} /><input value={itemText} onChange={(event) => setItemText(event.target.value)} placeholder="List item" aria-label={`Add item to ${plan.title}`} maxLength={180} /></form>
+      <form className="plan-add-item" onSubmit={addItem}><Plus size={14} /><input value={itemText} onChange={(event) => setItemText(event.target.value)} placeholder="Add a checklist item" aria-label={`Add item to ${plan.title}`} maxLength={180} /><button type="submit" disabled={!itemText.trim()}>Add</button></form>
     </article>
   );
 }
