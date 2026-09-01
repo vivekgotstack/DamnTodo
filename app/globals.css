@@ -584,9 +584,9 @@ input[type="date"], input[type="time"], input[type="datetime-local"] { color-sch
 .hero-copy p { max-width: 610px; margin: 0; color: #a8b8ce; font-size: 14px; line-height: 1.7; }
 .hero-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 24px; }
 .hero-primary { box-shadow: 0 10px 32px rgba(113, 165, 238, .22); }
-.hero-focus-ring { display: grid; place-items: center; width: 148px; height: 148px; padding: 11px; border-radius: 50%; background: conic-gradient(#92c4ff calc(var(--dashboard-progress, 0) * 1%), rgba(255, 255, 255, .08) 0); box-shadow: 0 0 0 1px rgba(182, 213, 255, .12), 0 20px 55px rgba(2, 9, 22, .25); }
-.hero-focus-ring::before { content: ""; position: absolute; width: 124px; height: 124px; border-radius: 50%; background: rgba(9, 21, 38, .93); box-shadow: inset 0 1px rgba(255, 255, 255, .07); }
-.hero-focus-ring span { position: relative; display: grid; justify-items: center; gap: 1px; }
+.hero-focus-ring { position: relative; isolation: isolate; display: grid; place-items: center; flex: 0 0 auto; width: 148px; height: 148px; padding: 11px; overflow: hidden; border-radius: 50%; background: conic-gradient(#92c4ff calc(var(--dashboard-progress, 0) * 1%), rgba(255, 255, 255, .08) 0); box-shadow: 0 0 0 1px rgba(182, 213, 255, .12), 0 20px 55px rgba(2, 9, 22, .25); }
+.hero-focus-ring::before { position: absolute; inset: 12px; z-index: 0; border-radius: 50%; content: ""; background: rgba(9, 21, 38, .96); box-shadow: inset 0 1px rgba(255, 255, 255, .07); }
+.hero-focus-ring span { position: relative; z-index: 1; display: grid; justify-items: center; gap: 1px; text-align: center; }
 .hero-focus-ring strong { font-size: 28px; letter-spacing: -.04em; }
 .hero-focus-ring small { color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: .09em; }
 .metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
@@ -634,7 +634,7 @@ input[type="date"], input[type="time"], input[type="datetime-local"] { color-sch
   .dashboard-hero { min-height: auto; border-radius: 20px; }
   .dashboard-hero-content { grid-template-columns: 1fr; gap: 22px; padding: 24px 21px; }
   .hero-copy h2 { font-size: 29px; }
-  .hero-focus-ring { width: 108px; height: 108px; justify-self: end; margin-top: -4px; }.hero-focus-ring::before { width: 90px; height: 90px; }.hero-focus-ring strong { font-size: 22px; }
+  .hero-focus-ring { width: 108px; height: 108px; justify-self: end; margin-top: -4px; }.hero-focus-ring::before { inset: 9px; }.hero-focus-ring strong { font-size: 22px; }
   .metric-grid { gap: 9px; }
   .overview-metric [data-slot="card-header"] { padding-inline: 12px; }.overview-metric [data-slot="card-content"] { padding-inline: 12px; }.overview-metric [data-slot="card-content"] > strong { font-size: 25px; }
   .dashboard-panel-heading { align-items: flex-start; }.soft-link { margin-top: 2px; }
