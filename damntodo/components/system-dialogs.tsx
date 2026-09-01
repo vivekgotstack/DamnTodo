@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { AlarmClock, BellRing, CheckCircle2, Download, LockKeyhole, Smartphone, Volume2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { AlarmClock, BellRing, CheckCircle2, Download, LockKeyhole, Smartphone } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -18,35 +18,12 @@ export function MotivationMoment({ mode, taskTitle, onFinish }: {
 }) {
   const [videoReady, setVideoReady] = useState(false);
   const opening = mode === "opening";
-  const [muted, setMuted] = useState(opening);
-  const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
     if (!opening) return;
     const fallback = window.setTimeout(onFinish, 7500);
     return () => window.clearTimeout(fallback);
   }, [onFinish, opening]);
-
-  const startPlayback = async () => {
-    const video = videoRef.current;
-    if (!video) return;
-    video.muted = muted;
-    try {
-      await video.play();
-    } catch {
-      video.muted = true;
-      setMuted(true);
-      await video.play().catch(() => undefined);
-    }
-  };
-
-  const enableSound = () => {
-    const video = videoRef.current;
-    if (!video) return;
-    video.muted = false;
-    setMuted(false);
-    void video.play().catch(() => undefined);
-  };
 
   return (
     <section
@@ -56,26 +33,20 @@ export function MotivationMoment({ mode, taskTitle, onFinish }: {
       aria-label={opening ? "Opening DamnTodo" : `Alarm for ${taskTitle ?? "your task"}`}
     >
       <video
-        ref={videoRef}
         className={`motivation-video ${videoReady ? "is-ready" : ""}`}
         autoPlay
-        muted={muted}
+        muted
         playsInline
         loop={!opening}
         preload="auto"
         aria-label={opening ? "Opening motivation video" : `Motivation video for ${taskTitle ?? "your alarm"}`}
-        onCanPlay={() => { setVideoReady(true); void startPlayback(); }}
+        onCanPlay={() => setVideoReady(true)}
         onEnded={opening ? onFinish : undefined}
         onError={opening ? onFinish : undefined}
       >
-        <source src="/motivation-one.mp4" type="video/mp4" />
+        <source src="/motivation-sky.mp4" type="video/mp4" />
       </video>
       <div className="motivation-vignette" />
-      {muted && (
-        <button className="motivation-sound" onClick={enableSound} type="button">
-          <Volume2 size={15} /> Sound on
-        </button>
-      )}
       {!opening && (
         <div className="motivation-callout">
           <span>One chance. Make it count.</span>

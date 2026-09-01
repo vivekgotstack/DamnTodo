@@ -148,6 +148,16 @@ export default function PlannerApp() {
   const finishOpening = useCallback(() => setShowOpening(false), []);
 
   useEffect(() => {
+    const installedApp = window.matchMedia("(display-mode: standalone)").matches || isNativeApp();
+    if (!installedApp) return;
+    const replayOnResume = () => {
+      if (document.visibilityState === "visible") setShowOpening(true);
+    };
+    document.addEventListener("visibilitychange", replayOnResume);
+    return () => document.removeEventListener("visibilitychange", replayOnResume);
+  }, []);
+
+  useEffect(() => {
     let active = true;
     loadState().then((saved) => {
       if (!active) return;
