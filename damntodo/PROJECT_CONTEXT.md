@@ -4,7 +4,7 @@ This is the short source of truth for future work. Read this file before scannin
 
 ## Product promise
 
-DamnTodo is a mobile-first, offline-first planner with four core jobs: backlog capture, due highlighting, local alarms, and deterministic auto-scheduling. It uses no AI and no account. A user can enter a multi-day or multi-month goal as an exact total effort, set a maximum session length, and receive evenly distributed sessions without losing or inventing minutes.
+DamnTodo is a mobile-first, offline-first planner with four core jobs: long-range roadmap scheduling, backlog rescue, persistent local alarms, and visible progress. It uses no AI and no account. A user can enter a goal such as DSA, choose a month, six months, a year, or exact dates, select study days and session length, then receive one organized roadmap with daily sessions across the full horizon. A custom one-step-per-line plan can be distributed across the same range.
 
 ## Architecture
 
@@ -21,7 +21,7 @@ DamnTodo is a mobile-first, offline-first planner with four core jobs: backlog c
 - `components/planner-app.tsx`: application shell, dashboard, navigation, views, persistence, reminders, and task actions.
 - `components/task-editor.tsx`: shadcn task and goal editor.
 - `components/system-dialogs.tsx`: install education and strict alarm check-in.
-- `lib/planner.ts`: task model, exact goal splitting, due state, and deterministic scheduling.
+- `lib/planner.ts`: roadmap/task models, daily and custom roadmap generation, missed-session rollover, progress/streak calculation, due state, and deterministic scheduling.
 - `lib/storage.ts`: IndexedDB load and save.
 - `lib/native-alarms.ts`: Capacitor permissions, channels, scheduling, snooze, and cancellation.
 - `app/globals.css`: visual system, responsive layout, and lightweight CSS motion.
@@ -34,11 +34,13 @@ The selected page is stored as `damntodo:active-view` in localStorage and mirror
 
 ## Data and privacy
 
-Tasks and settings live in IndexedDB on the current device. The selected page lives in localStorage. Notifications and scheduled alarms are device-local. Export and restore use a JSON file. Clearing browser storage removes browser data unless the user has a backup. There is intentionally no server synchronization.
+Roadmaps, their sessions, individual tasks, and settings live in IndexedDB on the current device. Planner state is schema version 3 and automatically upgrades version 2 goal sessions into first-class roadmaps. The selected page lives in localStorage. Notifications and scheduled alarms are device-local. Export and restore use a JSON file. Clearing browser storage removes browser data unless the user has a backup. There is intentionally no server synchronization.
 
 ## Alarm limits
 
 The PWA can show notifications while the browser and OS allow its service worker to run, but mobile browsers cannot guarantee an exact wake-up after the OS kills them. The Capacitor Android build is the reliable path. Strict mode schedules persistent local notifications and requires an honest written completion check-in inside the app. It should never claim to be impossible to bypass at the operating-system level.
+
+Roadmap alarms can use one fixed time or a deterministic random time inside a chosen window. The Android client keeps a rolling batch of the next 24 alarm-enabled sessions registered, avoiding a year of OS alarm registrations at once. Missed scheduled sessions automatically move to backlog while retaining their original planned time for recovery and streak calculation.
 
 ## Design rules
 

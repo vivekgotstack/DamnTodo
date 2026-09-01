@@ -22,11 +22,13 @@ import {
   Home,
   Inbox,
   ListChecks,
+  Map as MapIcon,
   Pencil,
   Plus,
   RotateCcw,
   Settings,
   Sparkles,
+  Shuffle,
   Target,
   TrendingUp,
   Trash2,
@@ -39,26 +41,30 @@ import { TaskEditor } from "@/components/task-editor";
 import { InstallDialog, StrictAlarmDialog } from "@/components/system-dialogs";
 import { ShimmerButton } from "@/components/ui/shimmer-button";
 import { Badge } from "@/components/ui/badge";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import {
   DEFAULT_STATE,
   autoSchedule,
+  createRoadmap,
   createTask,
-  createDistributedGoal,
   dueState,
   emptyDraft,
   formatDateTime,
   formatDuration,
+  getRoadmapStats,
   isSameDay,
   localDateTime,
+  rollOverMissedTasks,
   scheduleToday,
   type PlannerSettings,
   type PlannerState,
+  type Roadmap,
   type Task,
   type TaskDraft,
 } from "@/lib/planner";
-import { loadState, saveState } from "@/lib/storage";
+import { loadState, saveState, upgradePlannerState } from "@/lib/storage";
 import { cancelNativeTaskAlarm, isNativeApp, listenForNativeAlarm, prepareNativeAlarms, scheduleNativeTaskAlarm } from "@/lib/native-alarms";
 
 type View = "dashboard" | "today" | "schedule" | "backlog" | "completed";
@@ -121,8 +127,10 @@ export default function PlannerApp() {
   const [installed, setInstalled] = useState(false);
   const native = useSyncExternalStore(() => () => undefined, isNativeApp, () => false);
   const [activeAlarmId, setActiveAlarmId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ kind: "task"; task: Task } | { kind: "roadmap"; roadmap: Roadmap } | null>(null);
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>("default");
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const nativeAlarmBatch = useRef("");
 
   const announce = useCallback((message: string) => {
     setToast(message);
@@ -137,7 +145,8 @@ export default function PlannerApp() {
       const hashView = window.location.hash.replace("#", "");
       const restoredView = isView(hashView) ? hashView : localStorage.getItem(VIEW_KEY);
       if (isView(restoredView)) setView(restoredView);
-      setState(saved);
+      const rolled = rollOverMissedTasks(saved.tasks);
+      setState({ ...saved, tasks: rolled.tasks });
       setReady(true);
     });
     return () => { active = false; };
@@ -172,6 +181,22 @@ export default function PlannerApp() {
   }, [announce, ready, state]);
 
   useEffect(() => {
+    if (!ready) return;
+    const moveMissedWork = () => {
+      setState((current) => {
+        const rolled = rollOverMissedTasks(current.tasks);
+        return rolled.moved ? { ...current, tasks: rolled.tasks } : current;
+      });
+    };
+    const timer = setInterval(moveMissedWork, 60_000);
+    document.addEventListener("visibilitychange", moveMissedWork);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", moveMissedWork);
+    };
+  }, [ready]);
+
+  useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
     if (process.env.NODE_ENV === "production") navigator.serviceWorker.register("/sw.js").catch(() => undefined);
     else navigator.serviceWorker.getRegistrations().then((registrations) => Promise.all(registrations.map((registration) => registration.unregister()))).catch(() => undefined);
@@ -203,6 +228,20 @@ export default function PlannerApp() {
     void listenForNativeAlarm((taskId) => setActiveAlarmId(taskId)).then((dispose) => { stop = dispose; });
     return () => stop();
   }, []);
+
+  useEffect(() => {
+    if (!ready || !native) return;
+    const upcoming = state.tasks
+      .filter((task) => task.status === "scheduled" && task.alarmMode !== "none" && task.scheduledAt && new Date(task.scheduledAt) > new Date())
+      .sort(taskSort)
+      .slice(0, 24);
+    const batchKey = upcoming.map((task) => `${task.id}:${task.scheduledAt}:${task.alarmMode}`).join("|");
+    if (!batchKey || batchKey === nativeAlarmBatch.current) return;
+    nativeAlarmBatch.current = batchKey;
+    void prepareNativeAlarms(false).then((permission) => {
+      if (permission.granted) return Promise.all(upcoming.map(scheduleNativeTaskAlarm));
+    }).catch(() => undefined);
+  }, [native, ready, state.tasks]);
 
   const playReminderTone = useCallback(() => {
     if (!state.settings.sound) return;
@@ -241,7 +280,9 @@ export default function PlannerApp() {
       });
       if (!due.length) return;
       for (const task of due) {
-        const body = task.dueAt ? `Due ${formatDateTime(task.dueAt)} · ${formatDuration(task.duration)}` : "Task reminder";
+        const body = task.goalId && task.scheduledAt
+          ? `Roadmap session · ${formatDuration(task.duration)} · scheduled ${formatDateTime(task.scheduledAt)}`
+          : task.dueAt ? `Due ${formatDateTime(task.dueAt)} · ${formatDuration(task.duration)}` : "Task reminder";
         if (Notification.permission === "granted") {
           const registration = await navigator.serviceWorker?.ready;
           if (registration) await registration.showNotification(task.title, { body, icon: "/icon-192.png", badge: "/icon-192.png", tag: task.id });
@@ -290,6 +331,8 @@ export default function PlannerApp() {
         duration: draft.duration,
         dueAt: draft.dueAt || null,
         scheduledAt: draft.scheduledAt || null,
+        plannedFor: previous.plannedFor ?? (draft.scheduledAt || null),
+        missedAt: draft.scheduledAt ? null : previous.missedAt,
         reminderMinutes: draft.dueAt ? draft.reminderMinutes : null,
         alarmMode: draft.dueAt ? draft.alarmMode : "none",
         remindedFor: previous.dueAt === draft.dueAt && previous.reminderMinutes === draft.reminderMinutes ? previous.remindedFor : null,
@@ -303,14 +346,11 @@ export default function PlannerApp() {
       await scheduleAlarm(updated);
       announce("Task updated.");
     } else if (draft.kind === "goal") {
-      const result = createDistributedGoal(draft, state.tasks, state.settings);
+      const result = createRoadmap(draft);
       if (result.error) { announce(result.error); return; }
-      setState((current) => ({ ...current, tasks: [...result.tasks, ...current.tasks] }));
-      await Promise.all(result.tasks.map(scheduleAlarm));
+      setState((current) => ({ ...current, roadmaps: [result.roadmap!, ...current.roadmaps], tasks: [...result.tasks, ...current.tasks] }));
       openView("schedule");
-      announce(result.overflow
-        ? `Created ${result.tasks.length} sessions. ${result.overflow} need more working hours.`
-        : `Distributed exactly ${formatDuration(draft.totalDuration)} into ${result.tasks.length} balanced sessions.`);
+      announce(`Built ${result.tasks.length} sessions inside one ${draft.title.trim()} roadmap.`);
     } else {
       const task = createTask({ ...draft, scheduledAt: draft.scheduledAt || editor?.scheduledAt || "" });
       setState((current) => ({ ...current, tasks: [task, ...current.tasks] }));
@@ -336,12 +376,14 @@ export default function PlannerApp() {
 
   const toggleComplete = (task: Task) => {
     const completing = task.status !== "completed";
+    const canReturnToSchedule = Boolean(task.scheduledAt && new Date(task.scheduledAt).getTime() + task.duration * 60_000 > Date.now());
     setState((current) => ({
       ...current,
       tasks: current.tasks.map((item) => item.id === task.id ? {
         ...item,
-        status: completing ? "completed" : item.scheduledAt ? "scheduled" : "backlog",
+        status: completing ? "completed" : canReturnToSchedule ? "scheduled" : "backlog",
         completedAt: completing ? new Date().toISOString() : null,
+        missedAt: completing ? item.missedAt : canReturnToSchedule ? null : (item.missedAt ?? new Date().toISOString()),
         updatedAt: new Date().toISOString(),
       } : item),
     }));
@@ -350,10 +392,32 @@ export default function PlannerApp() {
   };
 
   const removeTask = (task: Task) => {
-    if (!window.confirm(`Delete “${task.title}”? This cannot be undone.`)) return;
-    setState((current) => ({ ...current, tasks: current.tasks.filter((item) => item.id !== task.id) }));
-    void cancelNativeTaskAlarm(task.id);
-    announce("Task deleted.");
+    setDeleteTarget({ kind: "task", task });
+  };
+
+  const removeRoadmap = (roadmap: Roadmap) => {
+    setDeleteTarget({ kind: "roadmap", roadmap });
+  };
+
+  const confirmDelete = () => {
+    if (!deleteTarget) return;
+    if (deleteTarget.kind === "task") {
+      const { task } = deleteTarget;
+      setState((current) => ({ ...current, tasks: current.tasks.filter((item) => item.id !== task.id) }));
+      void cancelNativeTaskAlarm(task.id);
+      announce("Session deleted.");
+    } else {
+      const { roadmap } = deleteTarget;
+      const roadmapTasks = state.tasks.filter((task) => task.goalId === roadmap.id);
+      setState((current) => ({
+        ...current,
+        roadmaps: current.roadmaps.filter((item) => item.id !== roadmap.id),
+        tasks: current.tasks.filter((task) => task.goalId !== roadmap.id),
+      }));
+      void Promise.all(roadmapTasks.map((task) => cancelNativeTaskAlarm(task.id)));
+      announce(`Deleted ${roadmap.title} and all ${roadmapTasks.length} sessions.`);
+    }
+    setDeleteTarget(null);
   };
 
   const planBacklog = () => {
@@ -363,6 +427,8 @@ export default function PlannerApp() {
       return;
     }
     setState((current) => ({ ...current, tasks: result.tasks }));
+    const rescued = result.tasks.filter((task) => state.tasks.find((previous) => previous.id === task.id)?.status === "backlog" && task.status === "scheduled").slice(0, 24);
+    void Promise.all(rescued.map(scheduleAlarm));
     openView("schedule");
     announce(result.overflow ? `Planned ${result.scheduled} tasks. ${result.overflow} still need more room.` : `Evenly planned ${result.scheduled} task${result.scheduled === 1 ? "" : "s"}.`);
   };
@@ -375,7 +441,7 @@ export default function PlannerApp() {
     }
     setState((current) => ({
       ...current,
-      tasks: current.tasks.map((item) => item.id === task.id ? { ...item, status: "scheduled", scheduledAt: slot, updatedAt: new Date().toISOString() } : item),
+      tasks: current.tasks.map((item) => item.id === task.id ? { ...item, status: "scheduled", scheduledAt: slot, plannedFor: item.plannedFor ?? slot, missedAt: null, updatedAt: new Date().toISOString() } : item),
     }));
     announce(`Scheduled for ${formatDateTime(slot)}.`);
   };
@@ -383,8 +449,9 @@ export default function PlannerApp() {
   const returnToBacklog = (task: Task) => {
     setState((current) => ({
       ...current,
-      tasks: current.tasks.map((item) => item.id === task.id ? { ...item, status: "backlog", scheduledAt: null, updatedAt: new Date().toISOString() } : item),
+      tasks: current.tasks.map((item) => item.id === task.id ? { ...item, status: "backlog", plannedFor: item.plannedFor ?? item.scheduledAt, scheduledAt: item.goalId ? item.scheduledAt : null, updatedAt: new Date().toISOString() } : item),
     }));
+    void cancelNativeTaskAlarm(task.id);
     announce("Moved back to the backlog.");
   };
 
@@ -450,7 +517,11 @@ export default function PlannerApp() {
   const snoozeStrictAlarm = () => {
     if (!activeAlarmId) return;
     const snoozedUntil = new Date(Date.now() + 10 * 60_000).toISOString();
-    setState((current) => ({ ...current, tasks: current.tasks.map((task) => task.id === activeAlarmId ? { ...task, snoozedUntil, remindedFor: null } : task) }));
+    const task = state.tasks.find((item) => item.id === activeAlarmId);
+    if (!task) return;
+    const updated = { ...task, snoozedUntil, remindedFor: null, updatedAt: new Date().toISOString() };
+    setState((current) => ({ ...current, tasks: current.tasks.map((item) => item.id === activeAlarmId ? updated : item) }));
+    void scheduleAlarm(updated);
     setActiveAlarmId(null);
     announce("Strict alarm snoozed for 10 minutes.");
   };
@@ -468,9 +539,9 @@ export default function PlannerApp() {
 
   const importBackup = async (file: File) => {
     try {
-      const restored = JSON.parse(await file.text()) as PlannerState;
-      if (restored.version !== 2 || !Array.isArray(restored.tasks)) throw new Error("Invalid backup");
-      setState({ ...DEFAULT_STATE, ...restored, settings: { ...DEFAULT_STATE.settings, ...restored.settings } });
+      const restored = upgradePlannerState(JSON.parse(await file.text()));
+      if (!restored) throw new Error("Invalid backup");
+      setState(restored);
       announce(`Restored ${restored.tasks.length} tasks.`);
     } catch {
       announce("That file is not a valid DamnTodo backup.");
@@ -479,6 +550,7 @@ export default function PlannerApp() {
 
   const clearAll = () => {
     if (!window.confirm("Delete every task and reset your planner? Download a backup first if you may need it.")) return;
+    void Promise.all(state.tasks.map((task) => cancelNativeTaskAlarm(task.id)));
     setState({ ...DEFAULT_STATE, settings: state.settings });
     setSettingsOpen(false);
     announce("Your planner is clear.");
@@ -537,6 +609,8 @@ export default function PlannerApp() {
                   backlog={backlog}
                   completed={completed}
                   scheduled={scheduledTasks}
+                  roadmaps={state.roadmaps}
+                  allTasks={state.tasks}
                   focusTask={focusTask}
                   completionRate={completionRate}
                   onOpen={openView}
@@ -545,6 +619,7 @@ export default function PlannerApp() {
                   onEdit={(task) => setEditor({ task })}
                   onToggle={toggleComplete}
                   onDelete={removeTask}
+                  onDeleteRoadmap={removeRoadmap}
                 />
               )}
               {view === "today" && (
@@ -568,11 +643,13 @@ export default function PlannerApp() {
               {view === "schedule" && (
                 <ScheduleView
                   tasks={state.tasks}
+                  roadmaps={state.roadmaps}
                   backlog={backlog}
                   settings={state.settings}
                   onEdit={(task) => setEditor({ task })}
                   onToggle={toggleComplete}
                   onDelete={removeTask}
+                  onDeleteRoadmap={removeRoadmap}
                   onBacklog={returnToBacklog}
                   onAdd={(scheduledAt) => setEditor({ task: null, scheduledAt })}
                   onPlan={planBacklog}
@@ -581,6 +658,7 @@ export default function PlannerApp() {
               {view === "backlog" && (
                 <BacklogView
                   tasks={backlog}
+                  roadmaps={state.roadmaps}
                   onAdd={() => setEditor({ task: null })}
                   onEdit={(task) => setEditor({ task })}
                   onToggle={toggleComplete}
@@ -626,6 +704,20 @@ export default function PlannerApp() {
       {activeAlarmId && state.tasks.find((task) => task.id === activeAlarmId) && (
         <StrictAlarmDialog task={state.tasks.find((task) => task.id === activeAlarmId)!} onComplete={completeStrictAlarm} onSnooze={snoozeStrictAlarm} />
       )}
+      <AlertDialog open={Boolean(deleteTarget)} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
+        <AlertDialogContent className="border-white/12 bg-[#0a1526] text-white">
+          <AlertDialogHeader>
+            <AlertDialogTitle>{deleteTarget?.kind === "roadmap" ? `Delete the entire ${deleteTarget.roadmap.title} roadmap?` : `Delete ${deleteTarget?.kind === "task" ? deleteTarget.task.title : "this session"}?`}</AlertDialogTitle>
+            <AlertDialogDescription className="text-slate-400">
+              {deleteTarget?.kind === "roadmap" ? `Every scheduled, backlog, and completed session in this roadmap will be removed together. This is the clean bulk-delete action.` : "Only this session will be removed. The rest of its roadmap stays intact."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="border-white/10 bg-white/5 text-white hover:bg-white/10 hover:text-white">Keep it</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDelete} className="bg-rose-500 text-white hover:bg-rose-400">Delete permanently</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       {toast && <div className="toast" role="status"><Check size={16} />{toast}</div>}
     </main>
   );
@@ -648,12 +740,14 @@ interface TaskActions {
   onBacklog?: (task: Task) => void;
 }
 
-function DashboardView({ todayTasks, overdue, backlog, completed, scheduled, focusTask, completionRate, onOpen, onAdd, onPlan, onEdit, onToggle, onDelete }: {
+function DashboardView({ todayTasks, overdue, backlog, completed, scheduled, roadmaps, allTasks, focusTask, completionRate, onOpen, onAdd, onPlan, onEdit, onToggle, onDelete, onDeleteRoadmap }: {
   todayTasks: Task[];
   overdue: Task[];
   backlog: Task[];
   completed: Task[];
   scheduled: Task[];
+  roadmaps: Roadmap[];
+  allTasks: Task[];
   focusTask: Task | null;
   completionRate: number;
   onOpen: (view: View) => void;
@@ -662,6 +756,7 @@ function DashboardView({ todayTasks, overdue, backlog, completed, scheduled, foc
   onEdit: (task: Task) => void;
   onToggle: (task: Task) => void;
   onDelete: (task: Task) => void;
+  onDeleteRoadmap: (roadmap: Roadmap) => void;
 }) {
   const todayMinutes = todayTasks.reduce((sum, task) => sum + task.duration, 0);
   const nextTasks = scheduled.filter((task) => task.scheduledAt).sort(taskSort).slice(0, 4);
@@ -691,6 +786,13 @@ function DashboardView({ todayTasks, overdue, backlog, completed, scheduled, foc
           </div>
         </CardContent>
       </Card>
+
+      {roadmaps.length > 0 && (
+        <section className="dashboard-roadmaps">
+          <div className="section-heading"><div><span className="eyebrow">Active roadmaps</span><h2>One goal, one organized system</h2></div><button className="soft-link" onClick={() => onOpen("schedule")}>Manage all <ArrowUpRight size={15} /></button></div>
+          <div className="roadmap-grid roadmap-grid-compact">{roadmaps.slice(0, 2).map((roadmap) => <RoadmapCard key={roadmap.id} roadmap={roadmap} tasks={allTasks} onDelete={onDeleteRoadmap} />)}</div>
+        </section>
+      )}
 
       <section className="metric-grid" aria-label="Planner summary">
         {metrics.map(({ label, value, note, icon: Icon, tone }) => (
@@ -726,6 +828,36 @@ function DashboardView({ todayTasks, overdue, backlog, completed, scheduled, foc
   );
 }
 
+function RoadmapCard({ roadmap, tasks, onDelete }: { roadmap: Roadmap; tasks: Task[]; onDelete: (roadmap: Roadmap) => void }) {
+  const stats = getRoadmapStats(tasks, roadmap.id);
+  const range = `${new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(new Date(`${roadmap.startDate}T00:00:00`))} – ${new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(new Date(`${roadmap.endDate}T00:00:00`))}`;
+  return (
+    <Card className={`roadmap-card ${roadmap.alarmMode === "strict" ? "strict-roadmap" : ""}`}>
+      <CardHeader className="roadmap-card-head">
+        <div className="roadmap-title-wrap"><span className="roadmap-icon"><MapIcon size={19} /></span><div><CardTitle>{roadmap.title}</CardTitle><span>{range}</span></div></div>
+        <button className="roadmap-delete" onClick={() => onDelete(roadmap)} aria-label={`Delete ${roadmap.title} roadmap and every session`} title="Delete entire roadmap"><Trash2 size={16} /></button>
+      </CardHeader>
+      <CardContent className="roadmap-card-body">
+        <div className="roadmap-progress-copy"><span>{stats.completed} of {stats.total} sessions</span><strong>{stats.progress}%</strong></div>
+        <Progress value={stats.progress} className="roadmap-progress" />
+        <div className="roadmap-stats">
+          <span className="streak-chip"><Flame size={15} /> {stats.streak} day streak</span>
+          {stats.backlog > 0 && <span className="backlog-chip"><RotateCcw size={14} /> {stats.backlog} to rescue</span>}
+          <span><Clock3 size={14} /> {formatDuration(roadmap.sessionDuration)} / session</span>
+        </div>
+        <div className="roadmap-next">
+          <div><span>Next step</span><strong>{stats.nextTask?.title ?? "Roadmap complete"}</strong></div>
+          {stats.nextTask && <small>{stats.nextTask.status === "backlog" ? "Waiting in backlog" : stats.nextTask.scheduledAt ? formatDateTime(stats.nextTask.scheduledAt) : "Ready to schedule"}</small>}
+        </div>
+        <div className="roadmap-rule">
+          {roadmap.scheduleStyle === "random" ? <><Shuffle size={14} /> Random between {roadmap.randomStart}–{roadmap.randomEnd}</> : <><AlarmClock size={14} /> Fixed at {roadmap.fixedTime}</>}
+          {roadmap.alarmMode === "strict" && <Badge className="red-mode-badge">Red mode</Badge>}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function TaskCard({ task, compact = false, ...actions }: { task: Task; compact?: boolean } & TaskActions) {
   const due = dueState(task);
   return (
@@ -737,7 +869,8 @@ function TaskCard({ task, compact = false, ...actions }: { task: Task; compact?:
         <span className="task-title">{task.title}</span>
         <span className="task-meta">
           <span><Clock3 size={12} />{formatDuration(task.duration)}</span>
-          {task.scheduledAt && <span>{formatDateTime(task.scheduledAt)}</span>}
+          {task.scheduledAt && task.status === "scheduled" && <span>{formatDateTime(task.scheduledAt)}</span>}
+          {task.status === "backlog" && task.missedAt && (task.plannedFor ?? task.scheduledAt) && <span className="missed-label">Missed · {formatDateTime((task.plannedFor ?? task.scheduledAt)!)}</span>}
           {task.goalId && task.sessionIndex && task.sessionCount && <span className="session-label">Session {task.sessionIndex}/{task.sessionCount}</span>}
           {task.dueAt && <span className={`due-label ${due}`}>{due === "overdue" ? "Overdue · " : due === "soon" ? "Due soon · " : "Due · "}{formatDateTime(task.dueAt)}</span>}
         </span>
@@ -804,17 +937,13 @@ function TodayView({ tasks, overdue, focusTask, totalMinutes, backlog, quickTitl
   );
 }
 
-function ScheduleView({ tasks, backlog, settings, onEdit, onToggle, onDelete, onBacklog, onAdd, onPlan }: {
-  tasks: Task[]; backlog: Task[]; settings: PlannerSettings; onEdit: (task: Task) => void; onToggle: (task: Task) => void; onDelete: (task: Task) => void; onBacklog: (task: Task) => void; onAdd: (scheduledAt: string) => void; onPlan: () => void;
+function ScheduleView({ tasks, roadmaps, backlog, settings, onEdit, onToggle, onDelete, onDeleteRoadmap, onBacklog, onAdd, onPlan }: {
+  tasks: Task[]; roadmaps: Roadmap[]; backlog: Task[]; settings: PlannerSettings; onEdit: (task: Task) => void; onToggle: (task: Task) => void; onDelete: (task: Task) => void; onDeleteRoadmap: (roadmap: Roadmap) => void; onBacklog: (task: Task) => void; onAdd: (scheduledAt: string) => void; onPlan: () => void;
 }) {
   const days = useMemo(() => {
     const start = new Date();
     start.setHours(0, 0, 0, 0);
-    const latest = tasks
-      .filter((task) => task.status === "scheduled" && task.scheduledAt && new Date(task.scheduledAt) >= start)
-      .reduce((max, task) => Math.max(max, new Date(task.scheduledAt!).getTime()), start.getTime());
-    const span = Math.min(62, Math.max(7, Math.ceil((latest - start.getTime()) / 86_400_000) + 1));
-    return Array.from({ length: span }, (_, index) => {
+    return Array.from({ length: 14 }, (_, index) => {
       const date = new Date(start);
       date.setDate(date.getDate() + index);
       return date;
@@ -822,8 +951,12 @@ function ScheduleView({ tasks, backlog, settings, onEdit, onToggle, onDelete, on
   }, [tasks]);
   return (
     <div className="schedule-layout">
+      <section className="roadmap-overview">
+        <div className="section-heading"><div><span className="eyebrow">Long-range systems</span><h2>{roadmaps.length ? `${roadmaps.length} active roadmap${roadmaps.length === 1 ? "" : "s"}` : "No roadmap yet"}</h2></div><span className="soft-pill"><MapIcon size={14} /> grouped, never scattered</span></div>
+        {roadmaps.length ? <div className="roadmap-grid">{roadmaps.map((roadmap) => <RoadmapCard key={roadmap.id} roadmap={roadmap} tasks={tasks} onDelete={onDeleteRoadmap} />)}</div> : <EmptyState icon={MapIcon} title="Turn a long goal into a daily rhythm" body="Enter DSA, choose six months or a year, and get one clean roadmap with evenly placed sessions." />}
+      </section>
       <section className="panel week-panel">
-        <div className="section-heading"><div><span className="eyebrow">Next {days.length} days</span><h2>Balanced by time, not guesswork</h2></div><span className="soft-pill">{settings.dayStart} to {settings.dayEnd}</span></div>
+        <div className="section-heading"><div><span className="eyebrow">Next 14 days only</span><h2>Your near-term path, without the year-long wall</h2></div><span className="soft-pill">{settings.dayStart} to {settings.dayEnd}</span></div>
         <div className="week-grid">
           {days.map((date, index) => {
             const dayTasks = tasks.filter((task) => task.status === "scheduled" && task.scheduledAt && dateKey(task.scheduledAt) === dateKey(date)).sort(taskSort);
@@ -848,13 +981,32 @@ function ScheduleView({ tasks, backlog, settings, onEdit, onToggle, onDelete, on
   );
 }
 
-function BacklogView({ tasks, onAdd, onEdit, onToggle, onDelete, onToday, onPlan }: { tasks: Task[]; onAdd: () => void; onEdit: (task: Task) => void; onToggle: (task: Task) => void; onDelete: (task: Task) => void; onToday: (task: Task) => void; onPlan: () => void }) {
+function BacklogView({ tasks, roadmaps, onAdd, onEdit, onToggle, onDelete, onToday, onPlan }: { tasks: Task[]; roadmaps: Roadmap[]; onAdd: () => void; onEdit: (task: Task) => void; onToggle: (task: Task) => void; onDelete: (task: Task) => void; onToday: (task: Task) => void; onPlan: () => void }) {
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const high = tasks.filter((task) => task.priority === "high").length;
   const total = tasks.reduce((sum, task) => sum + task.duration, 0);
+  const roadmapGroups = roadmaps.map((roadmap) => ({ roadmap, tasks: tasks.filter((task) => task.goalId === roadmap.id) })).filter((group) => group.tasks.length);
+  const knownRoadmaps = new Set(roadmaps.map((roadmap) => roadmap.id));
+  const looseTasks = tasks.filter((task) => !task.goalId || !knownRoadmaps.has(task.goalId));
+  const toggleExpanded = (id: string) => setExpanded((current) => {
+    const next = new Set(current);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
   return (
     <section className="panel list-panel">
       <div className="list-overview"><div><span className="eyebrow">Unscheduled work</span><h2>{tasks.length ? `${tasks.length} things, ${formatDuration(total)} total` : "A beautifully empty backlog"}</h2><p>{high ? `${high} high-priority task${high === 1 ? "" : "s"} will be placed first.` : "Nothing is hidden; everything here is ready to place."}</p></div>{tasks.length > 0 && <button className="button button-plan" onClick={onPlan}><Sparkles size={16} /> Evenly plan everything</button>}</div>
-      {tasks.length ? <div className="task-stack roomy">{tasks.map((task) => <TaskCard key={task.id} task={task} onEdit={onEdit} onToggle={onToggle} onDelete={onDelete} onToday={onToday} />)}</div> : <EmptyState icon={Inbox} title="Nothing is hanging over you" body="Capture the next thing in a spacious editor. It stays safely on this device until you schedule it." actionLabel="Capture a task" onAction={onAdd} />}
+      {tasks.length ? <div className="backlog-groups">
+        {roadmapGroups.map(({ roadmap, tasks: sessions }) => {
+          const isExpanded = expanded.has(roadmap.id);
+          const visible = isExpanded ? sessions : sessions.slice(0, 4);
+          return <section className="backlog-roadmap-group" key={roadmap.id}>
+            <header><div><span className="roadmap-icon"><MapIcon size={17} /></span><div><strong>{roadmap.title}</strong><small>{sessions.length} missed session{sessions.length === 1 ? "" : "s"} grouped here</small></div></div>{sessions.length > 4 && <button onClick={() => toggleExpanded(roadmap.id)}>{isExpanded ? "Show less" : `Show all ${sessions.length}`}</button>}</header>
+            <div className="task-stack">{visible.map((task) => <TaskCard key={task.id} task={task} onEdit={onEdit} onToggle={onToggle} onDelete={onDelete} onToday={onToday} />)}</div>
+          </section>;
+        })}
+        {looseTasks.length > 0 && <section className="backlog-loose"><div className="section-heading"><div><span className="eyebrow">Individual tasks</span><h2>Not part of a roadmap</h2></div></div><div className="task-stack">{looseTasks.map((task) => <TaskCard key={task.id} task={task} onEdit={onEdit} onToggle={onToggle} onDelete={onDelete} onToday={onToday} />)}</div></section>}
+      </div> : <EmptyState icon={Inbox} title="Nothing is hanging over you" body="Capture the next thing in a spacious editor. It stays safely on this device until you schedule it." actionLabel="Capture a task" onAction={onAdd} />}
     </section>
   );
 }

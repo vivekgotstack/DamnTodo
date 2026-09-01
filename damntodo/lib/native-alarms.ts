@@ -52,7 +52,7 @@ export async function scheduleNativeTaskAlarm(task: Task) {
   const { LocalNotifications } = await import("@capacitor/local-notifications");
   await cancelNativeTaskAlarm(task.id);
   const alarmAt = task.goalId && task.scheduledAt ? task.scheduledAt : task.dueAt;
-  const trigger = new Date(alarmAt).getTime() - task.reminderMinutes * 60_000;
+  const trigger = task.snoozedUntil ? new Date(task.snoozedUntil).getTime() : new Date(alarmAt).getTime() - task.reminderMinutes * 60_000;
   if (trigger <= Date.now()) return;
   const strict = task.alarmMode === "strict";
   const count = strict ? FOLLOW_UPS : 1;

@@ -1,4 +1,4 @@
-import { DEFAULT_STATE, type PlannerState, type Task } from "./planner";
+import { DEFAULT_STATE, type PlannerSettings, type PlannerState, type Roadmap, type Task } from "./planner";
 
 const DB_NAME = "damntodo-offline";
 const STORE_NAME = "planner";
@@ -22,19 +22,14 @@ export async function loadState(): Promise<PlannerState> {
   try {
     if (typeof indexedDB === "undefined") return readFallbackState();
     const db = await openDatabase();
-    const stored = await new Promise<PlannerState | undefined>((resolve, reject) => {
+    const stored = await new Promise<unknown>((resolve, reject) => {
       const request = db.transaction(STORE_NAME, "readonly").objectStore(STORE_NAME).get(STATE_KEY);
-      request.onsuccess = () => resolve(request.result as PlannerState | undefined);
+      request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     });
     db.close();
-    if (stored?.version === 2 && Array.isArray(stored.tasks)) {
-      return {
-        ...DEFAULT_STATE,
-        ...stored,
-        settings: { ...DEFAULT_STATE.settings, ...stored.settings },
-      };
-    }
+    const upgraded = upgradePlannerState(stored);
+    if (upgraded) return upgraded;
   } catch (error) {
     console.error("Could not read offline planner data", error);
   }
@@ -61,9 +56,7 @@ function readFallbackState(): PlannerState {
   try {
     const raw = localStorage.getItem(FALLBACK_KEY);
     if (!raw) return migrateLegacyTodos();
-    const stored = JSON.parse(raw) as PlannerState;
-    if (stored.version !== 2 || !Array.isArray(stored.tasks)) return migrateLegacyTodos();
-    return { ...DEFAULT_STATE, ...stored, settings: { ...DEFAULT_STATE.settings, ...stored.settings } };
+    return upgradePlannerState(JSON.parse(raw)) ?? migrateLegacyTodos();
   } catch {
     return migrateLegacyTodos();
   }
@@ -97,4 +90,68 @@ function migrateLegacyTodos(): PlannerState {
   } catch {
     return DEFAULT_STATE;
   }
+}
+
+type StoredState = {
+  version?: number;
+  tasks?: Task[];
+  roadmaps?: Roadmap[];
+  settings?: Partial<PlannerSettings>;
+};
+
+function roadmapsFromLegacyTasks(tasks: Task[], settings: PlannerSettings) {
+  const groups = new Map<string, Task[]>();
+  for (const task of tasks) {
+    if (!task.goalId) continue;
+    groups.set(task.goalId, [...(groups.get(task.goalId) ?? []), task]);
+  }
+  return [...groups.entries()].map(([id, sessions]): Roadmap => {
+    const ordered = [...sessions].sort((a, b) => (a.sessionIndex ?? 0) - (b.sessionIndex ?? 0));
+    const first = ordered[0];
+    const scheduled = sessions.map((task) => task.scheduledAt).filter((value): value is string => Boolean(value)).sort();
+    const workDays = [...new Set(scheduled.map((value) => new Date(value).getDay()))];
+    return {
+      id,
+      title: first.title,
+      notes: first.notes,
+      priority: first.priority,
+      startDate: (scheduled[0] ?? first.createdAt).slice(0, 10),
+      endDate: (first.dueAt ?? scheduled.at(-1) ?? first.createdAt).slice(0, 10),
+      sessionDuration: first.duration,
+      workDays: workDays.length ? workDays : settings.workDays,
+      planMode: "daily",
+      scheduleStyle: "fixed",
+      fixedTime: scheduled[0]?.slice(11, 16) ?? settings.dayStart,
+      randomStart: settings.dayStart,
+      randomEnd: settings.dayEnd,
+      alarmMode: first.alarmMode ?? (first.reminderMinutes === null ? "none" : "gentle"),
+      reminderMinutes: first.reminderMinutes,
+      createdAt: first.createdAt,
+      updatedAt: sessions.reduce((latest, task) => task.updatedAt > latest ? task.updatedAt : latest, first.updatedAt),
+    };
+  });
+}
+
+export function upgradePlannerState(value: unknown): PlannerState | null {
+  if (!value || typeof value !== "object") return null;
+  const stored = value as StoredState;
+  if (!Array.isArray(stored.tasks) || (stored.version !== 2 && stored.version !== 3)) return null;
+  const settings = { ...DEFAULT_STATE.settings, ...stored.settings };
+  const tasks = stored.tasks.map((task) => ({
+    ...task,
+    alarmMode: task.alarmMode ?? (task.reminderMinutes === null ? "none" : "gentle"),
+    snoozedUntil: task.snoozedUntil ?? null,
+    goalId: task.goalId ?? null,
+    sessionIndex: task.sessionIndex ?? null,
+    sessionCount: task.sessionCount ?? null,
+    totalGoalMinutes: task.totalGoalMinutes ?? null,
+    plannedFor: task.plannedFor ?? task.scheduledAt ?? null,
+    missedAt: task.missedAt ?? null,
+  }));
+  return {
+    version: 3,
+    tasks,
+    roadmaps: stored.version === 3 && Array.isArray(stored.roadmaps) ? stored.roadmaps : roadmapsFromLegacyTasks(tasks, settings),
+    settings,
+  };
 }

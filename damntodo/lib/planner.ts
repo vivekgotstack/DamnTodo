@@ -2,6 +2,28 @@ export type TaskStatus = "backlog" | "scheduled" | "completed";
 export type Priority = "low" | "medium" | "high";
 export type AlarmMode = "none" | "gentle" | "strict";
 export type DraftKind = "task" | "goal";
+export type RoadmapPlanMode = "daily" | "custom";
+export type ScheduleStyle = "fixed" | "random";
+
+export interface Roadmap {
+  id: string;
+  title: string;
+  notes: string;
+  priority: Priority;
+  startDate: string;
+  endDate: string;
+  sessionDuration: number;
+  workDays: number[];
+  planMode: RoadmapPlanMode;
+  scheduleStyle: ScheduleStyle;
+  fixedTime: string;
+  randomStart: string;
+  randomEnd: string;
+  alarmMode: AlarmMode;
+  reminderMinutes: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface Task {
   id: string;
@@ -20,6 +42,8 @@ export interface Task {
   sessionIndex?: number | null;
   sessionCount?: number | null;
   totalGoalMinutes?: number | null;
+  plannedFor?: string | null;
+  missedAt?: string | null;
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
@@ -36,8 +60,9 @@ export interface PlannerSettings {
 
 export interface PlannerState {
   tasks: Task[];
+  roadmaps: Roadmap[];
   settings: PlannerSettings;
-  version: 2;
+  version: 3;
 }
 
 export const DEFAULT_SETTINGS: PlannerSettings = {
@@ -51,8 +76,9 @@ export const DEFAULT_SETTINGS: PlannerSettings = {
 
 export const DEFAULT_STATE: PlannerState = {
   tasks: [],
+  roadmaps: [],
   settings: DEFAULT_SETTINGS,
-  version: 2,
+  version: 3,
 };
 
 export interface TaskDraft {
@@ -68,6 +94,13 @@ export interface TaskDraft {
   availableFrom: string;
   totalDuration: number;
   maxSessionDuration: number;
+  roadmapPlanMode: RoadmapPlanMode;
+  customTasks: string;
+  roadmapWorkDays: number[];
+  scheduleStyle: ScheduleStyle;
+  fixedTime: string;
+  randomStart: string;
+  randomEnd: string;
 }
 
 export const emptyDraft = (duration = 30): TaskDraft => ({
@@ -83,6 +116,13 @@ export const emptyDraft = (duration = 30): TaskDraft => ({
   availableFrom: toLocalInput(new Date()).slice(0, 10),
   totalDuration: 300,
   maxSessionDuration: 60,
+  roadmapPlanMode: "daily",
+  customTasks: "",
+  roadmapWorkDays: [0, 1, 2, 3, 4, 5, 6],
+  scheduleStyle: "fixed",
+  fixedTime: "19:00",
+  randomStart: "18:00",
+  randomEnd: "21:00",
 });
 
 export function createTask(draft: TaskDraft): Task {
@@ -104,6 +144,8 @@ export function createTask(draft: TaskDraft): Task {
     sessionIndex: null,
     sessionCount: null,
     totalGoalMinutes: null,
+    plannedFor: draft.scheduledAt || null,
+    missedAt: null,
     createdAt: now,
     updatedAt: now,
     completedAt: null,
@@ -124,6 +166,13 @@ export function draftFromTask(task: Task): TaskDraft {
     availableFrom: (task.scheduledAt ?? task.createdAt).slice(0, 10),
     totalDuration: task.totalGoalMinutes ?? task.duration,
     maxSessionDuration: task.duration,
+    roadmapPlanMode: "daily",
+    customTasks: "",
+    roadmapWorkDays: [0, 1, 2, 3, 4, 5, 6],
+    scheduleStyle: "fixed",
+    fixedTime: task.scheduledAt?.slice(11, 16) ?? "19:00",
+    randomStart: "18:00",
+    randomEnd: "21:00",
   };
 }
 
@@ -153,84 +202,198 @@ function priorityWeight(priority: Priority) {
   return priority === "high" ? 0 : priority === "medium" ? 1 : 2;
 }
 
-function distributeMinutes(total: number, maxPerSession: number) {
-  const safeTotal = Math.max(1, Math.round(total));
-  const safeMax = Math.max(1, Math.round(maxPerSession));
-  const sessionCount = Math.ceil(safeTotal / safeMax);
-  const base = Math.floor(safeTotal / sessionCount);
-  const remainder = safeTotal % sessionCount;
-  return Array.from({ length: sessionCount }, (_, index) => base + (index < remainder ? 1 : 0));
+function minutesFromTime(value: string) {
+  const { hours, minutes } = timeParts(value);
+  return hours * 60 + minutes;
 }
 
-/** Creates exact-total sessions spread over the whole requested date range. */
-export function createDistributedGoal(draft: TaskDraft, tasks: Task[], settings: PlannerSettings) {
-  if (!draft.dueAt) return { tasks: [] as Task[], overflow: 0, error: "Choose a deadline first." };
+function stableNumber(value: string) {
+  let result = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    result ^= value.charCodeAt(index);
+    result = Math.imul(result, 16777619);
+  }
+  return Math.abs(result);
+}
+
+function roadmapTime(draft: TaskDraft, roadmapId: string, day: Date, ordinal: number) {
+  const start = draft.scheduleStyle === "fixed" ? minutesFromTime(draft.fixedTime) : minutesFromTime(draft.randomStart);
+  const end = draft.scheduleStyle === "fixed" ? start : minutesFromTime(draft.randomEnd);
+  const latestStart = Math.max(start, end - draft.duration);
+  const span = Math.max(0, latestStart - start);
+  const randomOffset = span ? stableNumber(`${roadmapId}:${dateKey(day)}:${ordinal}`) % (span + 1) : 0;
+  const requested = draft.scheduleStyle === "random" ? start + randomOffset : start + ordinal * draft.duration;
+  const base = Math.min(requested, Math.max(0, 24 * 60 - draft.duration));
+  const scheduled = new Date(day);
+  scheduled.setHours(Math.floor(base / 60), base % 60, 0, 0);
+  return scheduled;
+}
+
+/** Creates a first-class roadmap with one session per chosen day, or custom steps spread across the full range. */
+export function createRoadmap(draft: TaskDraft) {
+  if (!draft.dueAt) return { roadmap: null as Roadmap | null, tasks: [] as Task[], error: "Choose an end date first." };
   const start = new Date(`${draft.availableFrom}T00:00:00`);
-  const deadline = new Date(draft.dueAt);
-  if (Number.isNaN(start.getTime()) || deadline.getTime() < start.getTime()) {
-    return { tasks: [] as Task[], overflow: 0, error: "The deadline must be after the start date." };
+  const endDate = draft.dueAt.slice(0, 10);
+  const deadline = new Date(`${endDate}T23:59:59`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(deadline.getTime()) || deadline < start) {
+    return { roadmap: null as Roadmap | null, tasks: [] as Task[], error: "The end date must be after the start date." };
+  }
+  if (!draft.roadmapWorkDays.length) {
+    return { roadmap: null as Roadmap | null, tasks: [] as Task[], error: "Choose at least one study day." };
+  }
+  if (draft.scheduleStyle === "random" && minutesFromTime(draft.randomEnd) <= minutesFromTime(draft.randomStart)) {
+    return { roadmap: null as Roadmap | null, tasks: [] as Task[], error: "The random alarm window needs to end after it starts." };
   }
 
-  const dayStartParts = timeParts(settings.dayStart);
-  const dayEndParts = timeParts(settings.dayEnd);
-  const capacity = Math.max(0, (dayEndParts.hours * 60 + dayEndParts.minutes) - (dayStartParts.hours * 60 + dayStartParts.minutes));
-  const durations = distributeMinutes(draft.totalDuration, Math.min(draft.maxSessionDuration, Math.max(1, capacity)));
-  const days: Array<{ date: Date; key: string; load: number }> = [];
+  const days: Date[] = [];
   const cursor = new Date(start);
+  const nowDate = new Date();
   for (let scanned = 0; cursor <= deadline && scanned < 740; scanned += 1) {
-    if (settings.workDays.includes(cursor.getDay())) {
-      const key = dateKey(cursor);
-      const load = tasks
-        .filter((task) => task.status === "scheduled" && task.scheduledAt && dateKey(task.scheduledAt) === key)
-        .reduce((sum, task) => sum + task.duration, 0);
-      days.push({ date: new Date(cursor), key, load });
-    }
+    const isToday = dateKey(cursor) === dateKey(nowDate);
+    const latestFinish = draft.scheduleStyle === "random" ? minutesFromTime(draft.randomEnd) : minutesFromTime(draft.fixedTime) + draft.duration;
+    const currentMinute = nowDate.getHours() * 60 + nowDate.getMinutes();
+    if (draft.roadmapWorkDays.includes(cursor.getDay()) && (!isToday || latestFinish > currentMinute)) days.push(new Date(cursor));
     cursor.setDate(cursor.getDate() + 1);
   }
-  if (!days.length || !capacity) return { tasks: [] as Task[], overflow: durations.length, error: "No working time exists in that date range." };
+  if (!days.length) return { roadmap: null as Roadmap | null, tasks: [] as Task[], error: "No study days exist in that date range." };
 
+  const customSteps = draft.customTasks.split("\n").map((step) => step.trim()).filter(Boolean);
+  if (draft.roadmapPlanMode === "custom" && !customSteps.length) {
+    return { roadmap: null as Roadmap | null, tasks: [] as Task[], error: "Add at least one custom roadmap step." };
+  }
+
+  const roadmapId = crypto.randomUUID();
   const now = new Date().toISOString();
-  const goalId = crypto.randomUUID();
-  const created: Task[] = [];
-  let overflow = 0;
-  durations.forEach((duration, index) => {
-    const ideal = durations.length === 1 ? 0 : Math.round(index * (days.length - 1) / (durations.length - 1));
-    const day = days
-      .map((candidate, dayIndex) => ({ candidate, distance: Math.abs(dayIndex - ideal), dayIndex }))
-      .filter(({ candidate }) => candidate.load + duration <= capacity)
-      .sort((a, b) => a.distance - b.distance || a.candidate.load - b.candidate.load || a.dayIndex - b.dayIndex)[0]?.candidate;
-    let scheduledAt: string | null = null;
-    if (!day) {
-      overflow += 1;
-    } else {
-      const scheduled = atTime(day.date, settings.dayStart);
-      scheduled.setMinutes(scheduled.getMinutes() + day.load);
-      day.load += duration;
-      scheduledAt = toLocalInput(scheduled);
-    }
-    created.push({
+  const sessionCount = draft.roadmapPlanMode === "daily" ? days.length : customSteps.length;
+  const sessionsOnDay = new Map<string, number>();
+  const tasks = Array.from({ length: sessionCount }, (_, index): Task => {
+    const dayIndex = draft.roadmapPlanMode === "daily"
+      ? index
+      : sessionCount === 1 ? 0 : Math.round(index * (days.length - 1) / (sessionCount - 1));
+    const day = days[dayIndex];
+    const key = dateKey(day);
+    const ordinal = sessionsOnDay.get(key) ?? 0;
+    sessionsOnDay.set(key, ordinal + 1);
+    const scheduledAt = toLocalInput(roadmapTime(draft, roadmapId, day, ordinal));
+    return {
       id: crypto.randomUUID(),
-      title: draft.title.trim(),
+      title: draft.roadmapPlanMode === "custom" ? customSteps[index] : draft.title.trim(),
       notes: draft.notes.trim(),
-      status: scheduledAt ? "scheduled" : "backlog",
+      status: "scheduled",
       priority: draft.priority,
-      duration,
-      dueAt: draft.dueAt,
+      duration: draft.duration,
+      dueAt: `${endDate}T23:59`,
       scheduledAt,
-      reminderMinutes: scheduledAt ? draft.reminderMinutes : null,
+      reminderMinutes: draft.alarmMode === "none" ? null : draft.reminderMinutes,
       remindedFor: null,
-      alarmMode: scheduledAt ? draft.alarmMode : "none",
+      alarmMode: draft.alarmMode,
       snoozedUntil: null,
-      goalId,
+      goalId: roadmapId,
       sessionIndex: index + 1,
-      sessionCount: durations.length,
-      totalGoalMinutes: draft.totalDuration,
+      sessionCount,
+      totalGoalMinutes: sessionCount * draft.duration,
+      plannedFor: scheduledAt,
+      missedAt: null,
       createdAt: now,
       updatedAt: now,
       completedAt: null,
-    });
+    };
   });
-  return { tasks: created, overflow, error: null as string | null };
+
+  const roadmap: Roadmap = {
+    id: roadmapId,
+    title: draft.title.trim(),
+    notes: draft.notes.trim(),
+    priority: draft.priority,
+    startDate: draft.availableFrom,
+    endDate,
+    sessionDuration: draft.duration,
+    workDays: [...draft.roadmapWorkDays],
+    planMode: draft.roadmapPlanMode,
+    scheduleStyle: draft.scheduleStyle,
+    fixedTime: draft.fixedTime,
+    randomStart: draft.randomStart,
+    randomEnd: draft.randomEnd,
+    alarmMode: draft.alarmMode,
+    reminderMinutes: draft.alarmMode === "none" ? null : draft.reminderMinutes,
+    createdAt: now,
+    updatedAt: now,
+  };
+  return { roadmap, tasks, error: null as string | null };
+}
+
+export function rollOverMissedTasks(tasks: Task[], now = new Date()) {
+  let moved = 0;
+  const next = tasks.map((task) => {
+    if (task.status !== "scheduled" || !task.scheduledAt) return task;
+    const sessionEnd = new Date(task.scheduledAt).getTime() + task.duration * 60_000;
+    if (sessionEnd > now.getTime()) return task;
+    moved += 1;
+    return {
+      ...task,
+      status: "backlog" as const,
+      plannedFor: task.plannedFor ?? task.scheduledAt,
+      missedAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+    };
+  });
+  return { tasks: next, moved };
+}
+
+export interface RoadmapStats {
+  total: number;
+  completed: number;
+  backlog: number;
+  upcoming: number;
+  totalMinutes: number;
+  completedMinutes: number;
+  progress: number;
+  streak: number;
+  nextTask: Task | null;
+}
+
+export function getRoadmapStats(tasks: Task[], roadmapId: string, now = new Date()): RoadmapStats {
+  const sessions = tasks.filter((task) => task.goalId === roadmapId);
+  const completed = sessions.filter((task) => task.status === "completed");
+  const totalMinutes = sessions.reduce((sum, task) => sum + task.duration, 0);
+  const completedMinutes = completed.reduce((sum, task) => sum + task.duration, 0);
+  const groups = new Map<string, Task[]>();
+  for (const task of sessions) {
+    const value = task.plannedFor ?? task.scheduledAt;
+    if (!value || new Date(value) > now) continue;
+    const key = dateKey(value);
+    groups.set(key, [...(groups.get(key) ?? []), task]);
+  }
+  const expectedDays = [...groups.entries()].sort(([a], [b]) => b.localeCompare(a));
+  const todayKey = dateKey(now);
+  if (expectedDays[0]?.[0] === todayKey) {
+    const todaySessions = expectedDays[0][1];
+    const stillInProgress = todaySessions.some((task) => task.status !== "completed" && task.scheduledAt && new Date(task.scheduledAt).getTime() + task.duration * 60_000 > now.getTime());
+    if (stillInProgress && !todaySessions.some((task) => task.status === "backlog")) expectedDays.shift();
+  }
+  let streak = 0;
+  for (const [, daySessions] of expectedDays) {
+    if (!daySessions.every((task) => task.status === "completed")) break;
+    streak += 1;
+  }
+  const nextTask = [...sessions]
+    .filter((task) => task.status !== "completed")
+    .sort((a, b) => {
+      if (a.status === "backlog" && b.status !== "backlog") return -1;
+      if (b.status === "backlog" && a.status !== "backlog") return 1;
+      return (a.scheduledAt ?? a.plannedFor ?? a.createdAt).localeCompare(b.scheduledAt ?? b.plannedFor ?? b.createdAt);
+    })[0] ?? null;
+  return {
+    total: sessions.length,
+    completed: completed.length,
+    backlog: sessions.filter((task) => task.status === "backlog").length,
+    upcoming: sessions.filter((task) => task.status === "scheduled").length,
+    totalMinutes,
+    completedMinutes,
+    progress: totalMinutes ? Math.round(completedMinutes / totalMinutes * 100) : 0,
+    streak,
+    nextTask,
+  };
 }
 
 export function autoSchedule(tasks: Task[], settings: PlannerSettings) {
@@ -299,6 +462,8 @@ export function autoSchedule(tasks: Task[], settings: PlannerSettings) {
       ...task,
       status: "scheduled",
       scheduledAt: toLocalInput(scheduled),
+      plannedFor: task.plannedFor ?? toLocalInput(scheduled),
+      missedAt: null,
       updatedAt: new Date().toISOString(),
     });
   }
