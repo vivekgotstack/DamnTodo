@@ -10,11 +10,9 @@ export const metadata: Metadata = {
   applicationName: "DamnTodo",
   manifest: "/manifest.webmanifest",
   icons: {
-    icon: [
-      { url: "/icon.svg", type: "image/svg+xml" },
-      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
-    ],
-    apple: [{ url: "/icon-192.png", sizes: "192x192", type: "image/png" }],
+    icon: [{ url: "/icon-192.png?v=pwa-logo", sizes: "192x192", type: "image/png" }],
+    shortcut: [{ url: "/icon-192.png?v=pwa-logo", type: "image/png" }],
+    apple: [{ url: "/icon-192.png?v=pwa-logo", sizes: "192x192", type: "image/png" }],
   },
   appleWebApp: {
     capable: true,
