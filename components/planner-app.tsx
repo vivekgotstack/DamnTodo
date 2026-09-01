@@ -768,7 +768,7 @@ export default function PlannerApp() {
   };
 
   const currentTitle = view === "dashboard" ? "A calm place to get things done." : view === "today" ? "Your day, clearly." : view === "schedule" ? "Your schedule." : view === "backlog" ? "Everything, captured." : view === "plans" ? "Plans and checklists." : "Progress worth seeing.";
-  const currentKicker = view === "dashboard" ? `${formatDayHeading(new Date())} · private and offline` : view === "today" ? "Today, without the noise" : view === "schedule" ? "Upcoming tasks and time blocks" : view === "backlog" ? `${backlog.length} task${backlog.length === 1 ? "" : "s"} waiting for a place` : view === "plans" ? `${state.plans.length} no-alarm plan${state.plans.length === 1 ? "" : "s"}` : `${completed.length} completed task${completed.length === 1 ? "" : "s"}`;
+  const currentKicker = view === "dashboard" ? `${formatDayHeading(new Date())} · private and offline` : view === "today" ? "Today, without the noise" : view === "schedule" ? "Upcoming tasks and time blocks" : view === "backlog" ? `${backlog.length} task${backlog.length === 1 ? "" : "s"} waiting for a place` : view === "plans" ? state.plans.length === 0 ? "No alarm plans" : `${state.plans.length} alarm plan${state.plans.length === 1 ? "" : "s"}` : `${completed.length} completed task${completed.length === 1 ? "" : "s"}`;
 
   return (
     <MotionConfig reducedMotion="user">
@@ -1099,7 +1099,7 @@ function TaskCard({ task, compact = false, ...actions }: { task: Task; compact?:
       layout
       initial={{ opacity: 0, y: 8, scale: 0.985 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
-      whileHover={{ x: 2 }}
+      whileHover={{ scale: 1.005 }}
       transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
       className={`task-card due-${due} ${compact ? "compact" : ""} ${task.status === "completed" ? "is-complete" : ""} ${task.status === "backlog" && task.alarmMode === "strict" ? "is-red-backlog" : ""}`}
     >

@@ -73,26 +73,26 @@ export function InstallDialog({ open, installed, native, alarmOnly = false, onCl
 }) {
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
-      <DialogContent className="max-h-[92svh] overflow-y-auto border-sky-200/15 bg-[#091526]/98 p-0 text-white sm:max-w-[560px]">
+      <DialogContent className="install-dialog max-h-[92svh] w-[calc(100vw-1rem)] max-w-[560px] overflow-x-hidden overflow-y-auto border-sky-200/15 bg-[#091526]/98 p-0 text-white">
         <div className="install-glow" />
-        <DialogHeader className="relative px-6 pt-7 text-left">
+        <DialogHeader className="relative px-4 pt-6 text-left sm:px-6 sm:pt-7">
           <Badge className="mb-3 w-fit border border-sky-200/15 bg-sky-200/8 text-sky-100"><Smartphone className="mr-1 size-3" />{alarmOnly ? "Alarm protection" : "Mobile first"}</Badge>
-          <DialogTitle className="text-3xl tracking-[-.045em]">{alarmOnly ? "Alarms work only in the installed app." : "Install the system, not another tab."}</DialogTitle>
+          <DialogTitle className="break-words text-[clamp(1.55rem,7.5vw,1.875rem)] tracking-[-.045em]">{alarmOnly ? "Alarms work only in the installed app." : "Install the system, not another tab."}</DialogTitle>
           <DialogDescription className="mt-2 max-w-md text-sm leading-6 text-slate-400">{alarmOnly ? "Browser tabs cannot guarantee alarms. Install DamnTodo and open it from your home screen to enable alarm scheduling, Stop, and Snooze." : "DamnTodo stays offline. Installation gives it a home-screen presence and unlocks the strongest alarm path your platform allows."}</DialogDescription>
         </DialogHeader>
-        <div className="relative grid gap-3 px-6 py-6 sm:grid-cols-3">
+        <div className="relative grid min-w-0 gap-3 px-4 py-5 sm:grid-cols-3 sm:px-6 sm:py-6">
           {[
             { icon: Download, title: "Offline", body: "Open it without a connection." },
             { icon: BellRing, title: "Alarms", body: "Persistent alarms in Android." },
             { icon: LockKeyhole, title: "Private", body: "No account, API, or backend." },
           ].map(({ icon: Icon, title, body }) => <Card key={title} className="border-white/10 bg-white/[.035] text-white"><CardContent className="p-4"><Icon className="mb-3 size-5 text-sky-200" /><strong className="block text-sm">{title}</strong><p className="mt-1 text-[11px] leading-5 text-slate-400">{body}</p></CardContent></Card>)}
         </div>
-        <div className="relative mx-6 rounded-xl border border-amber-200/10 bg-amber-200/[.035] p-3 text-[11px] leading-5 text-amber-50/65">
+        <div className="relative mx-4 min-w-0 break-words rounded-xl border border-amber-200/10 bg-amber-200/[.035] p-3 text-[11px] leading-5 text-amber-50/65 sm:mx-6">
           {native ? "You are in the native Android build. Grant Notifications and Alarms & reminders for killed-app alerts." : alarmOnly ? "Alarm controls are intentionally blocked in a regular browser. Android provides the strongest killed-app alarm path." : "The installed PWA improves access and offline use, but a browser cannot guarantee an exact alarm after the OS kills it. The included Android wrapper can."}
         </div>
-        <DialogFooter className="relative mx-0 mt-5 mb-0 border-t border-white/10 bg-black/10 px-6 py-5">
-          <Button variant="ghost" onClick={onClose} className="text-slate-400 hover:bg-white/5 hover:text-white">Maybe later</Button>
-          <RainbowButton size="lg" onClick={onInstall} disabled={installed || native} className="rounded-xl px-6 font-semibold disabled:opacity-55">
+        <DialogFooter className="relative mx-0 mt-4 mb-0 grid grid-cols-1 border-t border-white/10 bg-black/10 px-4 py-4 sm:mt-5 sm:flex sm:px-6 sm:py-5">
+          <Button variant="ghost" onClick={onClose} className="w-full text-slate-400 hover:bg-white/5 hover:text-white sm:w-auto">Maybe later</Button>
+          <RainbowButton size="lg" onClick={onInstall} disabled={installed || native} className="w-full rounded-xl px-4 font-semibold disabled:opacity-55 sm:w-auto sm:px-6">
             <Download className="mr-2 size-4" />{native ? "Android app active" : installed ? "Already installed" : alarmOnly ? "Install for alarms" : "Install DamnTodo"}
           </RainbowButton>
         </DialogFooter>
