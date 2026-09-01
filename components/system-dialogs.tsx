@@ -9,7 +9,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
-import { ShimmerButton } from "@/components/ui/shimmer-button";
+import { RainbowButton } from "@/components/ui/rainbow-button";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDuration, type Task } from "@/lib/planner";
 
@@ -92,9 +92,9 @@ export function InstallDialog({ open, installed, native, alarmOnly = false, onCl
         </div>
         <DialogFooter className="relative mx-0 mt-5 mb-0 border-t border-white/10 bg-black/10 px-6 py-5">
           <Button variant="ghost" onClick={onClose} className="text-slate-400 hover:bg-white/5 hover:text-white">Maybe later</Button>
-          <ShimmerButton onClick={onInstall} disabled={installed || native} background="rgba(120, 171, 246, .16)" shimmerColor="#e7f5ff" shimmerDuration="1.8s" borderRadius="12px" className="install-blast-button min-h-11 px-5 font-semibold text-sky-50 disabled:opacity-55">
+          <RainbowButton size="lg" onClick={onInstall} disabled={installed || native} className="rounded-xl px-6 font-semibold disabled:opacity-55">
             <Download className="mr-2 size-4" />{native ? "Android app active" : installed ? "Already installed" : alarmOnly ? "Install for alarms" : "Install DamnTodo"}
-          </ShimmerButton>
+          </RainbowButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>

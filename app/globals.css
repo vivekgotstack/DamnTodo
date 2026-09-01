@@ -56,6 +56,11 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+  --color-1: oklch(66.2% 0.225 25.9);
+  --color-2: oklch(60.4% 0.26 302);
+  --color-3: oklch(69.6% 0.165 251);
+  --color-4: oklch(80.2% 0.134 225);
+  --color-5: oklch(90.7% 0.231 133);
 }
 
 * { box-sizing: border-box; }
@@ -90,10 +95,6 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .install-side-cta { justify-content: flex-start; gap: 10px; width: 100%; min-height: 43px; padding: 0 11px; color: #dcecff; font-size: 12px; box-shadow: 0 10px 26px rgba(64, 126, 215, .12); }
 .install-side-cta:hover { transform: translateY(-1px); box-shadow: 0 15px 34px rgba(64, 126, 215, .18); }
 .mobile-install-cta { display: none; width: 42px; height: 42px; padding: 0; }
-.install-blast-button { isolation: isolate; border-color: rgba(204, 232, 255, .28) !important; box-shadow: 0 14px 38px rgba(64, 139, 239, .28), 0 0 0 1px rgba(203, 232, 255, .06) inset !important; }
-.install-blast-button::before { position: absolute; inset: -170%; z-index: -10; content: ""; pointer-events: none; background: conic-gradient(from 0deg, transparent 0 36%, rgba(207, 238, 255, .92) 43%, rgba(131, 180, 255, .22) 49%, transparent 57% 100%); animation: install-orbit 2.4s linear infinite; }
-.install-blast-button::after { position: absolute; inset: 1px; z-index: -5; border-radius: inherit; content: ""; pointer-events: none; background: radial-gradient(circle at 50% 130%, rgba(204, 235, 255, .38), transparent 42%); animation: install-blast 2.4s ease-in-out infinite; }
-.install-blast-button svg { animation: download-liftoff 2.4s cubic-bezier(.2, .8, .2, 1) infinite; }
 .offline-status { margin-top: 8px; padding: 12px 11px; border: 1px solid var(--line); border-radius: 12px; color: var(--text-soft); background: rgba(255, 255, 255, .025); font-size: 11px; }
 .status-dot { display: inline-block; width: 7px; height: 7px; margin-right: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 4px rgba(120, 216, 177, .09); }
 
@@ -493,7 +494,21 @@ input[type="date"], input[type="time"], input[type="datetime-local"] { color-sch
     transform: translateZ(0) rotate(360deg);
     }
   }
-}
+  --animate-rainbow: rainbow var(--speed, 2s) infinite linear;
+  --color-color-5: var(--color-5);
+  --color-color-4: var(--color-4);
+  --color-color-3: var(--color-3);
+  --color-color-2: var(--color-2);
+  --color-color-1: var(--color-1)
+;
+  @keyframes rainbow {
+  0% {
+    background-position: 0%;
+    }
+  100% {
+    background-position: 200%;
+    }
+  }}
 
 .dark {
   --background: #07111f;
@@ -527,6 +542,11 @@ input[type="date"], input[type="time"], input[type="datetime-local"] { color-sch
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+  --color-1: oklch(66.2% 0.225 25.9);
+  --color-2: oklch(60.4% 0.26 302);
+  --color-3: oklch(69.6% 0.165 251);
+  --color-4: oklch(80.2% 0.134 225);
+  --color-5: oklch(90.7% 0.231 133);
 }
 
 @layer base {
@@ -716,9 +736,6 @@ input[type="date"], input[type="time"], input[type="datetime-local"] { color-sch
 @keyframes red-badge-pulse { 50% { box-shadow: 0 0 0 4px rgba(235, 63, 101, .045); } }
 @keyframes flame-dance { 50% { transform: translateY(-1px) rotate(4deg) scale(1.06); } }
 @keyframes error-in { from { opacity: 0; transform: translateY(-3px); } }
-@keyframes install-orbit { to { transform: rotate(360deg); } }
-@keyframes install-blast { 0%, 45% { opacity: .3; transform: scale(.92); } 55% { opacity: 1; transform: scale(1.12); } 75%, 100% { opacity: .22; transform: scale(1); } }
-@keyframes download-liftoff { 0%, 45%, 100% { transform: translateY(0) scale(1); filter: drop-shadow(0 0 0 transparent); } 55% { transform: translateY(3px) scale(.9); } 68% { transform: translateY(-3px) scale(1.08); filter: drop-shadow(0 4px 7px rgba(201, 233, 255, .72)); } }
 
 @media (max-width: 900px) {
   .roadmap-grid { grid-template-columns: 1fr; }

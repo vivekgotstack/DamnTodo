@@ -41,7 +41,7 @@ import { type FormEvent, type MouseEvent, useCallback, useEffect, useMemo, useRe
 import logoMark from "@/public/logo-mark.png";
 import { TaskEditor } from "@/components/task-editor";
 import { BacklogAlarmDialog, InstallDialog, MotivationMoment, StrictAlarmDialog } from "@/components/system-dialogs";
-import { ShimmerButton } from "@/components/ui/shimmer-button";
+import { RainbowButton } from "@/components/ui/rainbow-button";
 import { Badge } from "@/components/ui/badge";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -791,7 +791,7 @@ export default function PlannerApp() {
             })}
           </nav>
           <div className="sidebar-bottom">
-            <ShimmerButton onClick={() => setInstallInfoOpen(true)} background="rgba(108, 159, 234, .12)" shimmerColor="#e7f5ff" shimmerDuration="1.9s" borderRadius="12px" className="install-side-cta install-blast-button"><Install size={17} /><span>{native ? "Android app" : installed ? "Installed" : "Install app"}</span></ShimmerButton>
+            <RainbowButton variant="outline" onClick={() => setInstallInfoOpen(true)} className="install-side-cta rounded-xl"><Install size={17} /><span>{native ? "Android app" : installed ? "Installed" : "Install app"}</span></RainbowButton>
             <button className="side-action" onClick={() => setSettingsOpen(true)}><Settings size={17} /><span>Settings</span></button>
             <div className="offline-status"><span className="status-dot" /><span>Private &amp; offline</span></div>
           </div>
@@ -804,7 +804,7 @@ export default function PlannerApp() {
               <div className="title-block"><span className="eyebrow">{currentKicker}</span><h1>{currentTitle}</h1></div>
             </div>
             <div className="top-actions">
-              {!installed && !native && <ShimmerButton onClick={() => setInstallInfoOpen(true)} background="rgba(108, 159, 234, .14)" shimmerColor="#d8eaff" borderRadius="12px" className="mobile-install-cta" aria-label="Install DamnTodo"><Download size={17} /></ShimmerButton>}
+              {!installed && !native && <RainbowButton size="icon" variant="outline" onClick={() => setInstallInfoOpen(true)} className="mobile-install-cta rounded-xl" aria-label="Install DamnTodo"><Download size={17} /></RainbowButton>}
               {backlog.length > 0 && <button className="button button-quiet plan-button" onClick={planBacklog}><Sparkles size={16} /> <span>Plan backlog</span></button>}
               <button className="button button-primary" onClick={() => setEditor({ task: null })}><Plus size={18} /> <span>New task</span></button>
             </div>
