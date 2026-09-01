@@ -9,8 +9,8 @@ export default function manifest(): MetadataRoute.Manifest {
     description: "A private, offline planner with backlog, due highlights, reminders, and automatic scheduling.",
     start_url: "/",
     display: "standalone",
-    background_color: "#ffffff",
-    theme_color: "#9fd4f5",
+    background_color: "#153f69",
+    theme_color: "#153f69",
     orientation: "any",
     categories: ["productivity", "utilities"],
     icons: [

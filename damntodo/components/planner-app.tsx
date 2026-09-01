@@ -36,7 +36,7 @@ import {
   X,
 } from "lucide-react";
 import { type FormEvent, type MouseEvent, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import skyDawn from "@/public/sky-dawn.webp";
+import skyViktor from "@/public/sky-viktor.webp";
 import logoMark from "@/public/logo-mark.png";
 import { TaskEditor } from "@/components/task-editor";
 import { InstallDialog, MotivationMoment, StrictAlarmDialog } from "@/components/system-dialogs";
@@ -580,7 +580,7 @@ export default function PlannerApp() {
   return (
     <MotionConfig reducedMotion="user">
     <main className="app-frame">
-      <Image className="sky-image" src={skyDawn} alt="" fill priority sizes="100vw" placeholder="blur" />
+      <Image className="sky-image" src={skyViktor} alt="" fill priority sizes="100vw" placeholder="blur" />
       <div className="sky-shade" />
       <section className={`workspace ${ready ? "is-ready" : ""}`}>
         <aside className="sidebar">

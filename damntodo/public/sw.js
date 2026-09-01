@@ -1,5 +1,5 @@
-const CACHE = "damntodo-v7";
-const APP_SHELL = ["/", "/manifest.webmanifest", "/sky-dawn.webp", "/motivation-one.mp4", "/logo-mark.png", "/icon-192.png", "/icon-512.png", "/icon-maskable-512.png"];
+const CACHE = "damntodo-v8";
+const APP_SHELL = ["/", "/manifest.webmanifest", "/sky-viktor.webp", "/motivation-one.mp4", "/logo-mark.png", "/icon-192.png", "/icon-512.png", "/icon-maskable-512.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {
