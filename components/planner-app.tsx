@@ -570,22 +570,24 @@ export default function PlannerApp() {
   };
 
   const removeTask = (task: Task) => {
+    if (task.status === "scheduled") { announce("Scheduled sessions are protected. Complete them or move them to backlog instead."); return; }
     setDeleteTarget({ kind: "task", task });
   };
 
   const removeRoadmap = (roadmap: Roadmap) => {
+    if (state.tasks.some((task) => task.goalId === roadmap.id && task.status === "scheduled")) { announce("This roadmap still has scheduled sessions, so it cannot be deleted."); return; }
     setDeleteTarget({ kind: "roadmap", roadmap });
   };
 
-  const clearCompleted = () => {
-    if (!completed.length || !window.confirm(`Delete all ${completed.length} completed task${completed.length === 1 ? "" : "s"}? This cannot be undone.`)) return;
-    const completedIds = new Set(completed.map((task) => task.id));
+  const deleteCompleted = (selectedIds: string[]) => {
+    const completedIds = new Set(selectedIds);
+    const selected = completed.filter((task) => completedIds.has(task.id));
+    if (!selected.length || !window.confirm(`Delete ${selected.length} selected completed task${selected.length === 1 ? "" : "s"}? This cannot be undone.`)) return;
     setState((current) => {
-      const tasks = current.tasks.filter((task) => !completedIds.has(task.id));
-      const activeRoadmapIds = new Set(tasks.map((task) => task.goalId).filter(Boolean));
-      return { ...current, tasks, roadmaps: current.roadmaps.filter((roadmap) => activeRoadmapIds.has(roadmap.id)) };
+      const tasks = current.tasks.filter((task) => task.status !== "completed" || !completedIds.has(task.id));
+      return { ...current, tasks };
     });
-    announce(`Deleted ${completed.length} completed task${completed.length === 1 ? "" : "s"}.`);
+    announce(`Deleted ${selected.length} selected completed task${selected.length === 1 ? "" : "s"}.`);
   };
 
   const confirmDelete = () => {
@@ -791,7 +793,7 @@ export default function PlannerApp() {
             })}
           </nav>
           <div className="sidebar-bottom">
-            <RainbowButton variant="outline" onClick={() => setInstallInfoOpen(true)} className="install-side-cta rounded-xl"><Install size={17} /><span>{native ? "Android app" : installed ? "Installed" : "Install app"}</span></RainbowButton>
+            <RainbowButton onClick={() => setInstallInfoOpen(true)} className="install-side-cta rounded-xl"><Install size={17} /><span>{native ? "Android app" : installed ? "Installed" : "Install app"}</span></RainbowButton>
             <button className="side-action" onClick={() => setSettingsOpen(true)}><Settings size={17} /><span>Settings</span></button>
             <div className="offline-status"><span className="status-dot" /><span>Private &amp; offline</span></div>
           </div>
@@ -804,7 +806,7 @@ export default function PlannerApp() {
               <div className="title-block"><span className="eyebrow">{currentKicker}</span><h1>{currentTitle}</h1></div>
             </div>
             <div className="top-actions">
-              {!installed && !native && <RainbowButton size="icon" variant="outline" onClick={() => setInstallInfoOpen(true)} className="mobile-install-cta rounded-xl" aria-label="Install DamnTodo"><Download size={17} /></RainbowButton>}
+              {!installed && !native && <RainbowButton size="icon" onClick={() => setInstallInfoOpen(true)} className="mobile-install-cta rounded-xl" aria-label="Install DamnTodo"><Download size={17} /></RainbowButton>}
               {backlog.length > 0 && <button className="button button-quiet plan-button" onClick={planBacklog}><Sparkles size={16} /> <span>Plan backlog</span></button>}
               <button className="button button-primary" onClick={() => setEditor({ task: null })}><Plus size={18} /> <span>New task</span></button>
             </div>
@@ -889,7 +891,7 @@ export default function PlannerApp() {
                 <PlansView plans={state.plans} onCreate={createPlan} onUpdate={updatePlan} onDelete={removePlan} />
               )}
               {view === "completed" && (
-                <CompletedView tasks={completed} onToggle={toggleComplete} onDelete={removeTask} onClear={clearCompleted} />
+                <CompletedView tasks={completed} onToggle={toggleComplete} onDeleteSelected={deleteCompleted} />
               )}
             </motion.div>
           )}
@@ -967,7 +969,7 @@ function LoadingSurface() {
 interface TaskActions {
   onEdit?: (task: Task) => void;
   onToggle: (task: Task) => void;
-  onDelete: (task: Task) => void;
+  onDelete?: (task: Task) => void;
   onToday?: (task: Task) => void;
   onBacklog?: (task: Task) => void;
 }
@@ -1121,7 +1123,7 @@ function TaskCard({ task, compact = false, ...actions }: { task: Task; compact?:
         {actions.onToday && task.status === "backlog" && <button onClick={() => actions.onToday?.(task)} title="Schedule today" aria-label={`Schedule ${task.title} today`}><CalendarDays size={15} /></button>}
         {actions.onBacklog && task.status === "scheduled" && <button onClick={() => actions.onBacklog?.(task)} title="Move to backlog" aria-label={`Move ${task.title} to backlog`}><RotateCcw size={15} /></button>}
         {actions.onEdit && <button onClick={() => actions.onEdit?.(task)} title="Edit" aria-label={`Edit ${task.title}`}><Pencil size={15} /></button>}
-        <button onClick={() => actions.onDelete(task)} title="Delete" aria-label={`Delete ${task.title}`}><Trash2 size={15} /></button>
+        {actions.onDelete && task.status !== "scheduled" && <button onClick={() => actions.onDelete?.(task)} title="Delete" aria-label={`Delete ${task.title}`}><Trash2 size={15} /></button>}
       </div>
     </motion.article>
   );
@@ -1292,11 +1294,24 @@ function PlanCard({ plan, onUpdate, onDelete }: { plan: Plan; onUpdate: (plan: P
   );
 }
 
-function CompletedView({ tasks, onToggle, onDelete, onClear }: { tasks: Task[]; onToggle: (task: Task) => void; onDelete: (task: Task) => void; onClear: () => void }) {
+function CompletedView({ tasks, onToggle, onDeleteSelected }: { tasks: Task[]; onToggle: (task: Task) => void; onDeleteSelected: (ids: string[]) => void }) {
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const selectedCount = tasks.filter((task) => selected.has(task.id)).length;
+  const toggleSelection = (id: string) => setSelected((current) => {
+    const next = new Set(current);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const selectAll = () => setSelected((current) => current.size === tasks.length ? new Set() : new Set(tasks.map((task) => task.id)));
+  const removeSelected = () => {
+    const ids = tasks.filter((task) => selected.has(task.id)).map((task) => task.id);
+    onDeleteSelected(ids);
+    setSelected(new Set());
+  };
   return (
     <section className="panel list-panel">
-      <div className="list-overview"><div><span className="eyebrow">Completed</span><h2>{tasks.length ? `${tasks.length} completed` : "No completed tasks yet"}</h2><p>Restore individual tasks or permanently clear the completed list.</p></div>{tasks.length > 0 && <button className="danger-outline-button" onClick={onClear}><Trash2 size={15} />Delete completed</button>}</div>
-      {tasks.length ? <div className="task-stack roomy">{tasks.map((task) => <TaskCard key={task.id} task={task} onToggle={onToggle} onDelete={onDelete} />)}</div> : <EmptyState icon={ListChecks} title="Your progress will collect here" body="Complete a task and it will move here automatically. You can restore it anytime." />}
+      <div className="list-overview"><div><span className="eyebrow">Completed</span><h2>{tasks.length ? `${tasks.length} completed` : "No completed tasks yet"}</h2><p>Select only the finished tasks you want to remove. Scheduled work is protected.</p></div>{tasks.length > 0 && <div className="completed-bulk-actions"><button className="button button-quiet" onClick={selectAll}>{selectedCount === tasks.length ? "Clear selection" : "Select all"}</button><button className="danger-outline-button" onClick={removeSelected} disabled={!selectedCount}><Trash2 size={15} />Delete selected{selectedCount ? ` (${selectedCount})` : ""}</button></div>}</div>
+      {tasks.length ? <div className="task-stack roomy">{tasks.map((task) => <div className={`completed-select-row ${selected.has(task.id) ? "is-selected" : ""}`} key={task.id}><button className="completed-selector" onClick={() => toggleSelection(task.id)} aria-pressed={selected.has(task.id)} aria-label={`${selected.has(task.id) ? "Deselect" : "Select"} ${task.title} for deletion`}>{selected.has(task.id) ? <Check size={14} /> : <Circle size={15} />}</button><TaskCard task={task} onToggle={(item) => { setSelected((current) => { const next = new Set(current); next.delete(item.id); return next; }); onToggle(item); }} /></div>)}</div> : <EmptyState icon={ListChecks} title="Your progress will collect here" body="Complete a task and it will move here automatically. You can restore it anytime." />}
     </section>
   );
 }

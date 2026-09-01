@@ -143,6 +143,12 @@ p { color: var(--text-soft); line-height: 1.55; }
 
 .task-stack { display: grid; gap: 8px; }
 .task-stack.roomy { gap: 10px; margin-top: 25px; }
+.completed-bulk-actions { display: flex; align-items: center; gap: 8px; }
+.completed-select-row { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 9px; }
+.completed-select-row .task-card { width: 100%; }
+.completed-selector { display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid var(--line); border-radius: 9px; cursor: pointer; color: var(--text-faint); background: rgba(255, 255, 255, .035); }
+.completed-select-row.is-selected .completed-selector { border-color: rgba(255, 135, 158, .35); color: #ffb2c0; background: rgba(232, 77, 107, .12); }
+.completed-select-row.is-selected .task-card { border-color: rgba(255, 135, 158, .2); }
 .task-card { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 12px; min-height: 69px; padding: 11px 11px 11px 14px; border: 1px solid var(--line); border-radius: 13px; background: rgba(255, 255, 255, .034); transition: border-color .18s ease, background .18s ease, transform .18s ease; }
 .task-card::before { position: absolute; inset: 14px auto 14px 0; width: 2px; border-radius: 3px; content: ""; opacity: 0; }
 .task-card.due-overdue::before { opacity: 1; background: var(--coral); box-shadow: 0 0 12px rgba(255, 145, 162, .55); }
