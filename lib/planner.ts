@@ -396,6 +396,38 @@ export function getRoadmapStats(tasks: Task[], roadmapId: string, now = new Date
   };
 }
 
+function roundUpToQuarterHour(value: Date) {
+  const rounded = new Date(value);
+  const minutes = Math.ceil((rounded.getMinutes() + rounded.getSeconds() / 60) / 15) * 15;
+  rounded.setMinutes(minutes, 0, 0);
+  return rounded;
+}
+
+export function nextAvailableSlotForDate(date: Date, tasks: Task[], settings: PlannerSettings, duration = settings.defaultDuration, now = new Date()) {
+  const workStart = atTime(date, settings.dayStart);
+  const workEnd = atTime(date, settings.dayEnd);
+  if (workEnd <= workStart) return null;
+
+  const earliest = dateKey(date) === dateKey(now) ? roundUpToQuarterHour(now) : workStart;
+  let cursor = new Date(Math.max(workStart.getTime(), earliest.getTime()));
+  const durationMs = duration * 60_000;
+  const busy = tasks
+    .filter((task) => task.status === "scheduled" && task.scheduledAt && dateKey(task.scheduledAt) === dateKey(date))
+    .map((task) => {
+      const start = new Date(task.scheduledAt!);
+      return { start, end: new Date(start.getTime() + task.duration * 60_000) };
+    })
+    .sort((a, b) => a.start.getTime() - b.start.getTime());
+
+  for (const interval of busy) {
+    if (interval.end <= cursor) continue;
+    if (cursor.getTime() + durationMs <= interval.start.getTime() && cursor.getTime() + durationMs <= workEnd.getTime()) return cursor;
+    cursor = roundUpToQuarterHour(new Date(Math.max(cursor.getTime(), interval.end.getTime())));
+  }
+
+  return cursor.getTime() + durationMs <= workEnd.getTime() ? cursor : null;
+}
+
 export function autoSchedule(tasks: Task[], settings: PlannerSettings) {
   const now = new Date();
   const backlog = tasks
@@ -443,26 +475,28 @@ export function autoSchedule(tasks: Task[], settings: PlannerSettings) {
 
   for (const task of backlog) {
     const dueTime = task.dueAt ? new Date(task.dueAt).getTime() : Number.MAX_SAFE_INTEGER;
-    const viable = candidates.filter((day) => {
-      const start = atTime(day.date, settings.dayStart);
-      return start.getTime() <= dueTime && day.load + task.duration <= day.capacity;
+    const occupied = [
+      ...tasks.filter((item) => item.status === "scheduled"),
+      ...updates.values(),
+    ];
+    const options = candidates.flatMap((day) => {
+      const slot = nextAvailableSlotForDate(day.date, occupied, settings, task.duration, now);
+      return slot ? [{ day, slot }] : [];
     });
-    const fallback = candidates.filter((day) => day.load + task.duration <= day.capacity);
-    const pool = viable.length ? viable : fallback;
-    const chosen = [...pool].sort((a, b) => a.load - b.load || a.date.getTime() - b.date.getTime())[0];
+    const viable = options.filter(({ slot }) => slot.getTime() + task.duration * 60_000 <= dueTime);
+    const pool = viable.length ? viable : options;
+    const chosen = [...pool].sort((a, b) => a.day.load - b.day.load || a.slot.getTime() - b.slot.getTime())[0];
     if (!chosen) {
       overflow += 1;
       continue;
     }
 
-    const scheduled = atTime(chosen.date, settings.dayStart);
-    scheduled.setMinutes(scheduled.getMinutes() + chosen.load);
-    chosen.load += task.duration;
+    chosen.day.load += task.duration;
     updates.set(task.id, {
       ...task,
       status: "scheduled",
-      scheduledAt: toLocalInput(scheduled),
-      plannedFor: task.plannedFor ?? toLocalInput(scheduled),
+      scheduledAt: toLocalInput(chosen.slot),
+      plannedFor: task.plannedFor ?? toLocalInput(chosen.slot),
       missedAt: null,
       updatedAt: new Date().toISOString(),
     });
@@ -476,20 +510,8 @@ export function autoSchedule(tasks: Task[], settings: PlannerSettings) {
 }
 
 export function scheduleToday(task: Task, tasks: Task[], settings: PlannerSettings) {
-  const now = new Date();
-  const start = atTime(now, settings.dayStart);
-  const end = atTime(now, settings.dayEnd);
-  const todayTasks = tasks
-    .filter((item) => item.status === "scheduled" && item.scheduledAt && dateKey(item.scheduledAt) === dateKey(now))
-    .sort((a, b) => a.scheduledAt!.localeCompare(b.scheduledAt!));
-  const last = todayTasks.at(-1);
-  const lastEnd = last?.scheduledAt
-    ? new Date(new Date(last.scheduledAt).getTime() + last.duration * 60_000)
-    : start;
-  const slot = new Date(Math.max(now.getTime(), start.getTime(), lastEnd.getTime()));
-  slot.setMinutes(Math.ceil(slot.getMinutes() / 15) * 15, 0, 0);
-  if (slot.getTime() + task.duration * 60_000 > end.getTime()) return null;
-  return toLocalInput(slot);
+  const slot = nextAvailableSlotForDate(new Date(), tasks, settings, task.duration);
+  return slot ? toLocalInput(slot) : null;
 }
 
 export function isSameDay(value: string | null, date = new Date()) {

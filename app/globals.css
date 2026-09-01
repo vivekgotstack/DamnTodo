@@ -69,11 +69,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 button:disabled { cursor: not-allowed; opacity: .48; }
 
 .app-frame { position: relative; min-height: 100svh; overflow: hidden; padding: clamp(12px, 2.2vw, 32px); background: linear-gradient(155deg, #123d68 0%, #76275c 52%, #e88a75 100%); }
-.sky-image { position: fixed !important; z-index: 0; object-fit: cover; object-position: center 60%; filter: brightness(1.18) saturate(1.22) contrast(1.02); transform: scale(1.006); }
+.sky-image { position: fixed; inset: -1px; z-index: 0; width: calc(100vw + 2px); height: calc(100svh + 2px); pointer-events: none; background: url("/sky-viktor.webp") center 60% / cover no-repeat; filter: brightness(1.18) saturate(1.22) contrast(1.02); transform: translateZ(0); }
 .sky-shade { position: fixed; inset: 0; z-index: 1; pointer-events: none; background: rgba(3, 14, 27, .04); }
 
 .workspace { position: relative; z-index: 2; display: grid; grid-template-columns: 224px minmax(0, 1fr); max-width: 1560px; min-height: calc(100svh - clamp(24px, 4.4vw, 64px)); margin: 0 auto; overflow: hidden; border: 1px solid rgba(228, 242, 255, .38); border-radius: 27px; opacity: .96; background: transparent; box-shadow: 0 28px 80px rgba(3, 12, 27, .2), inset 0 1px rgba(255, 255, 255, .16); transform: translateY(4px); transition: opacity .35s ease, transform .35s ease; }
-.workspace.is-ready { opacity: 1; transform: translateY(0); }
+.workspace.is-ready { opacity: 1; transform: none; }
 .sidebar { display: flex; flex-direction: column; min-width: 0; padding: 27px 17px 18px; border-right: 1px solid var(--line); background: rgba(7, 27, 51, .32); }
 .brand { display: flex; align-items: center; gap: 11px; width: 100%; padding: 0 8px 25px; cursor: pointer; background: transparent; }
 .brand-orb { display: grid; place-items: center; flex: 0 0 auto; width: 32px; height: 32px; border: 1px solid rgba(178, 208, 255, .28); border-radius: 10px; color: #e5efff; background: linear-gradient(145deg, rgba(116, 169, 255, .32), rgba(161, 128, 255, .2)); box-shadow: inset 0 1px rgba(255, 255, 255, .14), 0 8px 20px rgba(64, 109, 191, .16); }
@@ -369,8 +369,8 @@ input[type="date"], input[type="time"], input[type="datetime-local"] { color-sch
 
 @media (max-width: 680px) {
   .app-frame { padding: 0; overflow: visible; }
-  .workspace { display: block; min-height: 100svh; border: 0; border-radius: 0; background: transparent; }
-  .sidebar { position: fixed; inset: auto 0 0; z-index: 50; display: block; padding: 7px max(10px, env(safe-area-inset-right)) calc(7px + env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left)); border: 0; border-top: 1px solid var(--line); background: rgba(5, 13, 26, .94); backdrop-filter: blur(24px); }
+  .workspace { display: block; min-height: 100svh; overflow: visible; border: 0; border-radius: 0; background: transparent; transform: none; }
+  .sidebar { position: fixed; inset: auto 0 0; z-index: 40; display: block; width: 100%; padding: 7px max(10px, env(safe-area-inset-right)) calc(7px + env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left)); border: 0; border-top: 1px solid var(--line); background: rgba(5, 13, 26, .94); box-shadow: 0 -12px 34px rgba(0, 4, 12, .32); backdrop-filter: blur(24px); transform: translateZ(0); }
   .brand, .sidebar-bottom { display: none; }
   .main-nav { grid-template-columns: repeat(5, 1fr); gap: 2px; }
   .nav-item { width: 100%; min-height: 50px; border-radius: 10px; }

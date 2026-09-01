@@ -37,7 +37,6 @@ import {
   X,
 } from "lucide-react";
 import { type FormEvent, type MouseEvent, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import skyViktor from "@/public/sky-viktor.webp";
 import logoMark from "@/public/logo-mark.png";
 import { TaskEditor } from "@/components/task-editor";
 import { InstallDialog, MotivationMoment, StrictAlarmDialog } from "@/components/system-dialogs";
@@ -58,6 +57,7 @@ import {
   getRoadmapStats,
   isSameDay,
   localDateTime,
+  nextAvailableSlotForDate,
   rollOverMissedTasks,
   scheduleToday,
   type PlannerSettings,
@@ -113,6 +113,7 @@ function countForView(view: View, tasks: Task[]) {
 }
 
 const VIEW_KEY = "damntodo:active-view";
+const SCROLL_KEY = "damntodo:scroll:";
 const isView = (value: string | null): value is View =>
   value === "dashboard" || value === "today" || value === "schedule" || value === "backlog" || value === "completed";
 
@@ -186,8 +187,41 @@ export default function PlannerApp() {
     return () => window.removeEventListener("popstate", restoreFromHistory);
   }, []);
 
+  useEffect(() => {
+    const previous = window.history.scrollRestoration;
+    window.history.scrollRestoration = "manual";
+    return () => { window.history.scrollRestoration = previous; };
+  }, []);
+
+  useEffect(() => {
+    if (!ready) return;
+    let scrollFrame = 0;
+    const persist = () => localStorage.setItem(`${SCROLL_KEY}${view}`, String(window.scrollY));
+    const restoreFrame = window.requestAnimationFrame(() => {
+      const saved = Number(localStorage.getItem(`${SCROLL_KEY}${view}`) ?? "0");
+      window.scrollTo({ top: Number.isFinite(saved) ? saved : 0, left: 0, behavior: "auto" });
+    });
+    const rememberScroll = () => {
+      if (scrollFrame) return;
+      scrollFrame = window.requestAnimationFrame(() => {
+        scrollFrame = 0;
+        persist();
+      });
+    };
+    window.addEventListener("scroll", rememberScroll, { passive: true });
+    window.addEventListener("pagehide", persist);
+    return () => {
+      window.cancelAnimationFrame(restoreFrame);
+      if (scrollFrame) window.cancelAnimationFrame(scrollFrame);
+      persist();
+      window.removeEventListener("scroll", rememberScroll);
+      window.removeEventListener("pagehide", persist);
+    };
+  }, [ready, view]);
+
   const openView = useCallback((nextView: View, replace = false) => {
     if (nextView === view && !replace) return;
+    localStorage.setItem(`${SCROLL_KEY}${view}`, String(window.scrollY));
     setView(nextView);
     localStorage.setItem(VIEW_KEY, nextView);
     const nextUrl = `${window.location.pathname}${window.location.search}#${nextView}`;
@@ -390,6 +424,20 @@ export default function PlannerApp() {
 
   const saveTask = async (draft: TaskDraft) => {
     const safeDraft: TaskDraft = alarmsAvailable ? draft : { ...draft, alarmMode: "none", reminderMinutes: null };
+    if (safeDraft.kind === "task" && safeDraft.scheduledAt) {
+      const startsAt = new Date(safeDraft.scheduledAt).getTime();
+      const endsAt = startsAt + safeDraft.duration * 60_000;
+      const conflict = state.tasks.find((task) => {
+        if (task.id === editor?.task?.id || task.status !== "scheduled" || !task.scheduledAt) return false;
+        const taskStart = new Date(task.scheduledAt).getTime();
+        const taskEnd = taskStart + task.duration * 60_000;
+        return startsAt < taskEnd && endsAt > taskStart;
+      });
+      if (conflict) {
+        announce(`That time overlaps “${conflict.title}”. Choose another start time.`);
+        return;
+      }
+    }
     if (editor?.task) {
       const previous = editor.task;
       const updated: Task = {
@@ -500,7 +548,7 @@ export default function PlannerApp() {
     const rescued = result.tasks.filter((task) => state.tasks.find((previous) => previous.id === task.id)?.status === "backlog" && task.status === "scheduled").slice(0, 24);
     void Promise.all(rescued.map(scheduleAlarm));
     openView("schedule");
-    announce(result.overflow ? `Planned ${result.scheduled} tasks. ${result.overflow} still need more room.` : `Evenly planned ${result.scheduled} task${result.scheduled === 1 ? "" : "s"}.`);
+    announce(result.overflow ? `Scheduled ${result.scheduled} tasks. ${result.overflow} could not fit inside your working hours.` : `Scheduled ${result.scheduled} task${result.scheduled === 1 ? "" : "s"} into available time.`);
   };
 
   const moveToToday = (task: Task) => {
@@ -632,13 +680,13 @@ export default function PlannerApp() {
     announce("Your planner is clear.");
   };
 
-  const currentTitle = view === "dashboard" ? "A calm place to get things done." : view === "today" ? "Your day, clearly." : view === "schedule" ? "A plan that actually fits." : view === "backlog" ? "Everything, captured." : "Progress worth seeing.";
-  const currentKicker = view === "dashboard" ? `${formatDayHeading(new Date())} · private and offline` : view === "today" ? "Today, without the noise" : view === "schedule" ? "Balanced automatically, editable always" : view === "backlog" ? `${backlog.length} task${backlog.length === 1 ? "" : "s"} waiting for a place` : `${completed.length} completed task${completed.length === 1 ? "" : "s"}`;
+  const currentTitle = view === "dashboard" ? "A calm place to get things done." : view === "today" ? "Your day, clearly." : view === "schedule" ? "Your schedule." : view === "backlog" ? "Everything, captured." : "Progress worth seeing.";
+  const currentKicker = view === "dashboard" ? `${formatDayHeading(new Date())} · private and offline` : view === "today" ? "Today, without the noise" : view === "schedule" ? "Upcoming tasks and time blocks" : view === "backlog" ? `${backlog.length} task${backlog.length === 1 ? "" : "s"} waiting for a place` : `${completed.length} completed task${completed.length === 1 ? "" : "s"}`;
 
   return (
     <MotionConfig reducedMotion="user">
     <main className="app-frame">
-      <Image className="sky-image" src={skyViktor} alt="" fill priority sizes="100vw" placeholder="blur" />
+      <div className="sky-image" aria-hidden="true" />
       <div className="sky-shade" />
       <section className={`workspace ${ready ? "is-ready" : ""}`}>
         <aside className="sidebar">
@@ -1021,7 +1069,7 @@ function TodayView({ tasks, overdue, focusTask, totalMinutes, backlog, quickTitl
               ))}
             </div>
           ) : (
-            <EmptyState icon={CalendarDays} title="Make today intentional" body="Add one task directly or evenly place everything waiting in your backlog." actionLabel="Add a task" onAction={onAdd} secondaryLabel={backlog.length ? `Plan ${backlog.length} from backlog` : undefined} onSecondary={backlog.length ? onPlan : undefined} />
+            <EmptyState icon={CalendarDays} title="Nothing scheduled today" body="Add a task at a specific time or schedule work from your backlog into open slots." actionLabel="Add a task" onAction={onAdd} secondaryLabel={backlog.length ? `Schedule ${backlog.length} from backlog` : undefined} onSecondary={backlog.length ? onPlan : undefined} />
           )}
         </section>
       </div>
@@ -1033,7 +1081,7 @@ function TodayView({ tasks, overdue, focusTask, totalMinutes, backlog, quickTitl
           {backlog.slice(0, 6).map((task) => <TaskCard key={task.id} task={task} compact onEdit={onEdit} onToggle={onToggle} onDelete={onDelete} onToday={onToday} />)}
           {!backlog.length && <div className="mini-empty"><CheckCircle2 size={22} /><span>Nothing waiting.<br />That&apos;s a good feeling.</span></div>}
         </div>
-        {backlog.length > 0 && <button className="button button-plan wide" onClick={onPlan}><Sparkles size={16} /> Evenly plan {backlog.length} task{backlog.length === 1 ? "" : "s"}</button>}
+        {backlog.length > 0 && <button className="button button-plan wide" onClick={onPlan}><Sparkles size={16} /> Schedule {backlog.length} task{backlog.length === 1 ? "" : "s"}</button>}
       </aside>
     </div>
   );
@@ -1054,31 +1102,30 @@ function ScheduleView({ tasks, roadmaps, backlog, settings, onEdit, onToggle, on
   return (
     <div className="schedule-layout">
       <section className="roadmap-overview">
-        <div className="section-heading"><div><span className="eyebrow">Long-range systems</span><h2>{roadmaps.length ? `${roadmaps.length} active roadmap${roadmaps.length === 1 ? "" : "s"}` : "No roadmap yet"}</h2></div><span className="soft-pill"><MapIcon size={14} /> grouped, never scattered</span></div>
-        {roadmaps.length ? <div className="roadmap-grid">{roadmaps.map((roadmap) => <RoadmapCard key={roadmap.id} roadmap={roadmap} tasks={tasks} onDelete={onDeleteRoadmap} />)}</div> : <EmptyState icon={MapIcon} title="Turn a long goal into a daily rhythm" body="Enter DSA, choose six months or a year, and get one clean roadmap with evenly placed sessions." />}
+        <div className="section-heading"><div><span className="eyebrow">Roadmaps</span><h2>{roadmaps.length ? `${roadmaps.length} active roadmap${roadmaps.length === 1 ? "" : "s"}` : "No roadmap yet"}</h2></div><span className="soft-pill"><MapIcon size={14} /> Long-term plans</span></div>
+        {roadmaps.length ? <div className="roadmap-grid">{roadmaps.map((roadmap) => <RoadmapCard key={roadmap.id} roadmap={roadmap} tasks={tasks} onDelete={onDeleteRoadmap} />)}</div> : <EmptyState icon={MapIcon} title="Create a structured roadmap" body="Choose a date range, working days, session length, and the steps you want to schedule." />}
       </section>
       <section className="panel week-panel">
-        <div className="section-heading"><div><span className="eyebrow">Next 14 days only</span><h2>Your near-term path, without the year-long wall</h2></div><span className="soft-pill">{settings.dayStart} to {settings.dayEnd}</span></div>
+        <div className="section-heading"><div><span className="eyebrow">Next 14 days</span><h2>Upcoming schedule</h2></div><span className="soft-pill">Working hours · {settings.dayStart}–{settings.dayEnd}</span></div>
         <div className="week-grid">
           {days.map((date, index) => {
             const dayTasks = tasks.filter((task) => task.status === "scheduled" && task.scheduledAt && dateKey(task.scheduledAt) === dateKey(date)).sort(taskSort);
             const minutes = dayTasks.reduce((sum, task) => sum + task.duration, 0);
-            const inputDate = new Date(date);
-            const [hours, mins] = settings.dayStart.split(":").map(Number);
-            inputDate.setHours(hours, mins, 0, 0);
+            const nextSlot = nextAvailableSlotForDate(date, tasks, settings);
+            const slotLabel = nextSlot ? new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit" }).format(nextSlot) : "Day full";
             return (
               <article className={`day-column ${index === 0 ? "today" : ""}`} key={date.toISOString()}>
                 <header><div><span>{index === 0 ? "Today" : new Intl.DateTimeFormat("en-US", { weekday: "short" }).format(date)}</span><strong>{date.getDate()}</strong></div><small>{minutes ? formatDuration(minutes) : "Open"}</small></header>
                 <div className="day-tasks">
                   {dayTasks.map((task) => <TaskCard key={task.id} task={task} compact onEdit={onEdit} onToggle={onToggle} onDelete={onDelete} onBacklog={onBacklog} />)}
-                  <button className="add-slot" onClick={() => onAdd(localDateTime(inputDate))}><Plus size={15} /> Add task</button>
+                  <button className="add-slot" disabled={!nextSlot} onClick={() => { if (nextSlot) onAdd(localDateTime(nextSlot)); }}><Plus size={15} /> {nextSlot ? `Add at ${slotLabel}` : slotLabel}</button>
                 </div>
               </article>
             );
           })}
         </div>
       </section>
-      {backlog.length > 0 && <section className="schedule-helper"><div><span className="helper-icon"><Sparkles size={20} /></span><div><strong>{backlog.length} task{backlog.length === 1 ? "" : "s"} still waiting</strong><p>Place them across your lightest days, while respecting due dates and work hours.</p></div></div><button className="button button-primary" onClick={onPlan}>Plan them now <ChevronRight size={16} /></button></section>}
+      {backlog.length > 0 && <section className="schedule-helper"><div><span className="helper-icon"><Sparkles size={20} /></span><div><strong>{backlog.length} unscheduled task{backlog.length === 1 ? "" : "s"}</strong><p>Schedule them into open time without overlapping existing tasks.</p></div></div><button className="button button-primary" onClick={onPlan}>Auto-schedule <ChevronRight size={16} /></button></section>}
     </div>
   );
 }
@@ -1097,7 +1144,7 @@ function BacklogView({ tasks, roadmaps, onAdd, onEdit, onToggle, onDelete, onTod
   });
   return (
     <section className="panel list-panel">
-      <div className="list-overview"><div><span className="eyebrow">Unscheduled work</span><h2>{tasks.length ? `${tasks.length} things, ${formatDuration(total)} total` : "A beautifully empty backlog"}</h2><p>{high ? `${high} high-priority task${high === 1 ? "" : "s"} will be placed first.` : "Nothing is hidden; everything here is ready to place."}</p></div>{tasks.length > 0 && <button className="button button-plan" onClick={onPlan}><Sparkles size={16} /> Evenly plan everything</button>}</div>
+      <div className="list-overview"><div><span className="eyebrow">Unscheduled work</span><h2>{tasks.length ? `${tasks.length} tasks, ${formatDuration(total)} total` : "No unscheduled tasks"}</h2><p>{high ? `${high} high-priority task${high === 1 ? "" : "s"} will be scheduled first.` : "Tasks here are ready to place on your calendar."}</p></div>{tasks.length > 0 && <button className="button button-plan" onClick={onPlan}><Sparkles size={16} /> Auto-schedule all</button>}</div>
       {tasks.length ? <div className="backlog-groups">
         {roadmapGroups.map(({ roadmap, tasks: sessions }) => {
           const isExpanded = expanded.has(roadmap.id);
@@ -1149,7 +1196,7 @@ function SettingsPanel({ settings, notificationPermission, installed, native, al
       <div className="settings-panel">
         <header className="modal-header"><div><span className="eyebrow">Your system</span><h2 id="settings-title">Settings</h2></div><button className="close-button" onClick={onClose} aria-label="Close settings"><X size={20} /></button></header>
         <div className="settings-body">
-          <section className="settings-section"><div className="settings-heading"><span className="settings-icon"><CalendarDays size={18} /></span><div><h3>Auto-schedule window</h3><p>Tasks are divided evenly across these days and hours.</p></div></div><div className="weekday-picker">{WEEKDAYS.map((day, index) => <button key={`${day.value}-${index}`} className={settings.workDays.includes(day.value) ? "active" : ""} onClick={() => toggleWorkDay(day.value)} aria-label={`Toggle ${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][day.value]}`}>{day.label}</button>)}</div><div className="form-grid three compact-grid"><label className="field"><span>Start</span><input type="time" value={settings.dayStart} onChange={(event) => onChange({ ...settings, dayStart: event.target.value })} /></label><label className="field"><span>Finish</span><input type="time" value={settings.dayEnd} onChange={(event) => onChange({ ...settings, dayEnd: event.target.value })} /></label><label className="field"><span>Plan ahead</span><select value={settings.planningDays} onChange={(event) => onChange({ ...settings, planningDays: Number(event.target.value) })}><option value={5}>5 workdays</option><option value={7}>7 workdays</option><option value={10}>10 workdays</option><option value={14}>14 workdays</option></select></label></div></section>
+          <section className="settings-section"><div className="settings-heading"><span className="settings-icon"><CalendarDays size={18} /></span><div><h3>Auto-schedule window</h3><p>Tasks use real open slots inside these working days and hours.</p></div></div><div className="weekday-picker">{WEEKDAYS.map((day, index) => <button key={`${day.value}-${index}`} className={settings.workDays.includes(day.value) ? "active" : ""} onClick={() => toggleWorkDay(day.value)} aria-label={`Toggle ${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][day.value]}`}>{day.label}</button>)}</div><div className="form-grid three compact-grid"><label className="field"><span>Start</span><input type="time" value={settings.dayStart} onChange={(event) => onChange({ ...settings, dayStart: event.target.value })} /></label><label className="field"><span>Finish</span><input type="time" value={settings.dayEnd} onChange={(event) => onChange({ ...settings, dayEnd: event.target.value })} /></label><label className="field"><span>Plan ahead</span><select value={settings.planningDays} onChange={(event) => onChange({ ...settings, planningDays: Number(event.target.value) })}><option value={5}>5 workdays</option><option value={7}>7 workdays</option><option value={10}>10 workdays</option><option value={14}>14 workdays</option></select></label></div></section>
           <section className="settings-section"><div className="settings-heading"><span className="settings-icon"><BellRing size={18} /></span><div><h3>Reminders</h3><p>{alarmsAvailable ? "Local alarms with no account or server." : "Unavailable in a regular browser."}</p></div></div>{alarmsAvailable ? <><div className="settings-row"><div><strong>{native ? "Android alarm system" : notificationPermission === "granted" ? "Notifications enabled" : "Notifications are off"}</strong><span>{native ? "Can notify outside the app after Android permissions are granted." : notificationPermission === "granted" ? "Due reminders can appear while the app is active." : "Allow notifications to receive due reminders."}</span></div>{(native || notificationPermission !== "granted") && <button className="button button-quiet" onClick={onEnableNotifications}><Bell size={15} /> {native ? "Configure" : "Enable"}</button>}</div><label className="toggle-row"><div><strong>Reminder sound</strong><span>Play a tone when an in-app reminder fires.</span></div><input type="checkbox" checked={settings.sound} onChange={(event) => onChange({ ...settings, sound: event.target.checked })} /><i /></label><div className="honest-note"><CloudOff size={17} /><p><strong>{native ? "Android path:" : "Installed app:"}</strong> {native ? "Persistent exact local notifications work after the app is killed when Notifications and Alarms & reminders are allowed." : "Keep the installed app available so due reminders can appear with Stop and Snooze controls."}</p></div></> : <button className="alarm-settings-lock" onClick={onAlarmUnavailable}><LockKeyhole size={18} /><span><strong>Install DamnTodo for alarms</strong><small>Browser alarms are blocked because they cannot be trusted.</small></span><ChevronRight size={16} /></button>}</section>
           <section className="settings-section"><div className="settings-heading"><span className="settings-icon"><Install size={18} /></span><div><h3>App &amp; data</h3><p>Your tasks live only in this browser&apos;s private offline database.</p></div></div><div className="action-grid"><button className="settings-action" onClick={onInstall}><Install size={18} /><span><strong>{installed ? "App installed" : "Install DamnTodo"}</strong><small>{installed ? "Ready from your home screen" : "Use it like a native app"}</small></span><ChevronRight size={16} /></button><button className="settings-action" onClick={onExport}><Download size={18} /><span><strong>Download backup</strong><small>Save every task and setting</small></span><ChevronRight size={16} /></button><button className="settings-action" onClick={() => fileRef.current?.click()}><FileUp size={18} /><span><strong>Restore backup</strong><small>Import a DamnTodo JSON file</small></span><ChevronRight size={16} /></button></div><input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void onImport(file); event.target.value = ""; }} /><button className="danger-button" onClick={onClear}><Trash2 size={15} /> Clear every task</button></section>
         </div>
