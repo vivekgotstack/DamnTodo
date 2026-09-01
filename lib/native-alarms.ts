@@ -1,5 +1,5 @@
 import { Capacitor } from "@capacitor/core";
-import { nextReminderOccurrence, type Task } from "./planner";
+import { nextDayRetryStart, nextReminderOccurrence, type Task } from "./planner";
 
 const CHANNEL_ID = "damntodo-strict";
 const FOLLOW_UPS = 24;
@@ -54,14 +54,26 @@ export async function scheduleNativeTaskAlarm(task: Task) {
   const trigger = nextReminderOccurrence(task);
   if (trigger === null) return;
   const strict = task.alarmMode === "strict";
+  const triggers: number[] = [];
+  if (task.status === "scheduled" && task.scheduledAt) {
+    const dayEnd = new Date(task.scheduledAt);
+    dayEnd.setHours(23, 59, 59, 999);
+    for (let at = trigger; at <= dayEnd.getTime() && triggers.length < FOLLOW_UPS; at += 60 * 60_000) triggers.push(at);
+    const retryStart = nextDayRetryStart(task);
+    if (retryStart) {
+      for (let at = new Date(retryStart).getTime(); triggers.length < FOLLOW_UPS; at += 60 * 60_000) triggers.push(at);
+    }
+  } else {
+    for (let index = 0; index < FOLLOW_UPS; index += 1) triggers.push(trigger + index * 60 * 60_000);
+  }
   await LocalNotifications.schedule({
-    notifications: Array.from({ length: FOLLOW_UPS }, (_, index) => ({
+    notifications: triggers.map((at, index) => ({
       id: notificationIds(task.id)[index],
       title: strict ? "DamnTodo red alarm" : "DamnTodo hourly reminder",
       body: strict ? `${task.title} is still unfinished. Complete it or move it honestly to tomorrow's backlog.` : `${task.title} is still unfinished. This reminder returns each hour.`,
       largeBody: strict ? `Open DamnTodo to complete ${task.title}, snooze one hour, or move it to a high-priority backlog retry.` : undefined,
       channelId: CHANNEL_ID,
-      schedule: { at: new Date(trigger + index * 60 * 60_000), allowWhileIdle: true },
+      schedule: { at: new Date(at), allowWhileIdle: true },
       ongoing: strict,
       autoCancel: !strict,
       isExactNotification: true,

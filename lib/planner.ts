@@ -356,16 +356,45 @@ export function rollOverMissedTasks(tasks: Task[], now = new Date()) {
   const next = tasks.map((task) => {
     if (task.status !== "scheduled" || !task.scheduledAt) return task;
     const sessionEnd = new Date(task.scheduledAt).getTime() + task.duration * 60_000;
-    if (sessionEnd > now.getTime() || task.missedAt) return task;
+    if (sessionEnd > now.getTime()) return task;
+    const dayEnd = new Date(task.scheduledAt);
+    dayEnd.setHours(23, 59, 59, 999);
+    if (now.getTime() <= dayEnd.getTime()) {
+      if (task.missedAt) return task;
+      moved += 1;
+      return {
+        ...task,
+        plannedFor: task.plannedFor ?? task.scheduledAt,
+        missedAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+      };
+    }
     moved += 1;
     return {
       ...task,
+      status: "backlog" as const,
+      priority: task.alarmMode === "strict" ? "high" as const : task.priority,
       plannedFor: task.plannedFor ?? task.scheduledAt,
-      missedAt: now.toISOString(),
+      scheduledAt: null,
+      backlogAlarmTime: task.backlogAlarmTime || "09:00",
+      backlogAlarmStartsAt: task.alarmMode === "none" ? null : nextDayRetryStart(task),
+      snoozedUntil: null,
+      remindedFor: null,
+      missedAt: task.missedAt ?? now.toISOString(),
       updatedAt: now.toISOString(),
     };
   });
   return { tasks: next, moved };
+}
+
+export function nextDayRetryStart(task: Pick<Task, "scheduledAt" | "plannedFor" | "backlogAlarmTime">) {
+  const source = task.scheduledAt ?? task.plannedFor;
+  if (!source) return null;
+  const retry = new Date(source);
+  retry.setDate(retry.getDate() + 1);
+  const [hours, minutes] = (task.backlogAlarmTime || "09:00").split(":").map(Number);
+  retry.setHours(Number.isFinite(hours) ? hours : 9, Number.isFinite(minutes) ? minutes : 0, 0, 0);
+  return retry.toISOString();
 }
 
 const HOURLY_REMINDER_MS = 60 * 60 * 1000;
