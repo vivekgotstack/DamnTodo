@@ -423,7 +423,9 @@ export function nextReminderOccurrence(task: Task, now = Date.now()) {
   const startsAt = taskReminderStart(task);
   if (startsAt === null || Number.isNaN(startsAt)) return null;
   if (startsAt > now) return startsAt;
-  return startsAt + (Math.floor((now - startsAt) / HOURLY_REMINDER_MS) + 1) * HOURLY_REMINDER_MS;
+  const current = currentReminderOccurrence(task, now);
+  if (!current) return startsAt;
+  return task.remindedFor === current.key ? current.triggerAt + HOURLY_REMINDER_MS : current.triggerAt;
 }
 
 export interface RoadmapStats {
