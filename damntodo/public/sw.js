@@ -1,4 +1,4 @@
-const CACHE = "damntodo-v10";
+const CACHE = "damntodo-v11";
 const APP_SHELL = ["/", "/manifest.webmanifest", "/sky-viktor.webp", "/motivation-strange.gif", "/logo-mark.png", "/icon-192.png", "/icon-512.png", "/icon-maskable-512.png"];
 
 self.addEventListener("install", (event) => {

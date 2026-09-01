@@ -12,10 +12,12 @@ import { ShimmerButton } from "@/components/ui/shimmer-button";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDuration, type Task } from "@/lib/planner";
 
-export function MotivationMoment({ mode, taskTitle, onFinish }: {
+export function MotivationMoment({ mode, taskTitle, onFinish, onSnooze, onCheckIn }: {
   mode: "opening" | "alarm";
   taskTitle?: string;
   onFinish: () => void;
+  onSnooze?: () => void;
+  onCheckIn?: () => void;
 }) {
   const opening = mode === "opening";
 
@@ -47,19 +49,22 @@ export function MotivationMoment({ mode, taskTitle, onFinish }: {
         <div className="motivation-callout">
           <span>One chance. Make it count.</span>
           <h2>{taskTitle}</h2>
-          <Button onClick={onFinish} className="h-12 bg-white px-6 text-slate-950 shadow-2xl hover:bg-sky-50">
-            I&apos;m ready
-          </Button>
+          <div className="motivation-controls">
+            {onSnooze && <Button variant="outline" onClick={onSnooze} className="h-12 border-white/35 bg-slate-950/45 px-5 text-white backdrop-blur-sm hover:bg-slate-900/70 hover:text-white">Snooze 10 min</Button>}
+            <Button onClick={onFinish} className="h-12 bg-white px-6 text-slate-950 shadow-2xl hover:bg-sky-50">Stop alarm</Button>
+            {onCheckIn && <Button variant="ghost" onClick={onCheckIn} className="h-12 bg-rose-300/15 px-5 text-rose-50 hover:bg-rose-300/25 hover:text-white">Check in</Button>}
+          </div>
         </div>
       )}
     </section>
   );
 }
 
-export function InstallDialog({ open, installed, native, onClose, onInstall }: {
+export function InstallDialog({ open, installed, native, alarmOnly = false, onClose, onInstall }: {
   open: boolean;
   installed: boolean;
   native: boolean;
+  alarmOnly?: boolean;
   onClose: () => void;
   onInstall: () => void;
 }) {
@@ -68,9 +73,9 @@ export function InstallDialog({ open, installed, native, onClose, onInstall }: {
       <DialogContent className="max-h-[92svh] overflow-y-auto border-sky-200/15 bg-[#091526]/98 p-0 text-white sm:max-w-[560px]">
         <div className="install-glow" />
         <DialogHeader className="relative px-6 pt-7 text-left">
-          <Badge className="mb-3 w-fit border border-sky-200/15 bg-sky-200/8 text-sky-100"><Smartphone className="mr-1 size-3" />Mobile first</Badge>
-          <DialogTitle className="text-3xl tracking-[-.045em]">Install the system, not another tab.</DialogTitle>
-          <DialogDescription className="mt-2 max-w-md text-sm leading-6 text-slate-400">DamnTodo stays offline. Installation gives it a home-screen presence and unlocks the strongest alarm path your platform allows.</DialogDescription>
+          <Badge className="mb-3 w-fit border border-sky-200/15 bg-sky-200/8 text-sky-100"><Smartphone className="mr-1 size-3" />{alarmOnly ? "Alarm protection" : "Mobile first"}</Badge>
+          <DialogTitle className="text-3xl tracking-[-.045em]">{alarmOnly ? "Alarms work only in the installed app." : "Install the system, not another tab."}</DialogTitle>
+          <DialogDescription className="mt-2 max-w-md text-sm leading-6 text-slate-400">{alarmOnly ? "Browser tabs cannot guarantee alarms. Install DamnTodo and open it from your home screen to enable alarm scheduling, Stop, and Snooze." : "DamnTodo stays offline. Installation gives it a home-screen presence and unlocks the strongest alarm path your platform allows."}</DialogDescription>
         </DialogHeader>
         <div className="relative grid gap-3 px-6 py-6 sm:grid-cols-3">
           {[
@@ -80,12 +85,12 @@ export function InstallDialog({ open, installed, native, onClose, onInstall }: {
           ].map(({ icon: Icon, title, body }) => <Card key={title} className="border-white/10 bg-white/[.035] text-white"><CardContent className="p-4"><Icon className="mb-3 size-5 text-sky-200" /><strong className="block text-sm">{title}</strong><p className="mt-1 text-[11px] leading-5 text-slate-400">{body}</p></CardContent></Card>)}
         </div>
         <div className="relative mx-6 rounded-xl border border-amber-200/10 bg-amber-200/[.035] p-3 text-[11px] leading-5 text-amber-50/65">
-          {native ? "You are in the native Android build. Grant Notifications and Alarms & reminders for killed-app alerts." : "The installed PWA improves access and offline use, but a browser cannot guarantee an exact alarm after the OS kills it. The included Android wrapper can."}
+          {native ? "You are in the native Android build. Grant Notifications and Alarms & reminders for killed-app alerts." : alarmOnly ? "Alarm controls are intentionally blocked in a regular browser. Android provides the strongest killed-app alarm path." : "The installed PWA improves access and offline use, but a browser cannot guarantee an exact alarm after the OS kills it. The included Android wrapper can."}
         </div>
         <DialogFooter className="relative mx-0 mt-5 mb-0 border-t border-white/10 bg-black/10 px-6 py-5">
           <Button variant="ghost" onClick={onClose} className="text-slate-400 hover:bg-white/5 hover:text-white">Maybe later</Button>
           <ShimmerButton onClick={onInstall} disabled={installed || native} background="rgba(120, 171, 246, .16)" shimmerColor="#cce5ff" borderRadius="12px" className="min-h-11 px-5 font-semibold text-sky-50 shadow-xl shadow-sky-500/10 disabled:opacity-55">
-            <Download className="mr-2 size-4" />{native ? "Android app active" : installed ? "Already installed" : "Install DamnTodo"}
+            <Download className="mr-2 size-4" />{native ? "Android app active" : installed ? "Already installed" : alarmOnly ? "Install for alarms" : "Install DamnTodo"}
           </ShimmerButton>
         </DialogFooter>
       </DialogContent>

@@ -1,7 +1,7 @@
 "use client";
 
 import { type FormEvent, useMemo, useState } from "react";
-import { AlarmClock, CalendarRange, ChevronRight, Clock3, ListChecks, Sparkles } from "lucide-react";
+import { AlarmClock, CalendarRange, ChevronRight, Clock3, ListChecks, LockKeyhole, Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -43,10 +43,22 @@ function roadmapSessionCount(draft: TaskDraft) {
   return count;
 }
 
-export function TaskEditor({ task, initialScheduledAt, defaultDuration, onClose, onSave }: {
+function AlarmInstallGate({ onClick }: { onClick: () => void }) {
+  return (
+    <button type="button" className="alarm-install-gate" onClick={onClick}>
+      <span><LockKeyhole className="size-4" /></span>
+      <div><strong>Alarms need the installed app</strong><small>Install DamnTodo to unlock reliable alarms and alarm controls.</small></div>
+      <ChevronRight className="size-4" />
+    </button>
+  );
+}
+
+export function TaskEditor({ task, initialScheduledAt, defaultDuration, alarmsAvailable, onAlarmUnavailable, onClose, onSave }: {
   task: Task | null;
   initialScheduledAt?: string;
   defaultDuration: number;
+  alarmsAvailable: boolean;
+  onAlarmUnavailable: () => void;
   onClose: () => void;
   onSave: (draft: TaskDraft) => void;
 }) {
@@ -64,6 +76,10 @@ export function TaskEditor({ task, initialScheduledAt, defaultDuration, onClose,
     if (!draft.title.trim()) { setError("Give this a clear name first."); return; }
     if (draft.kind === "goal" && !draft.dueAt) { setError("Choose how long this roadmap should run."); return; }
     if (draft.kind === "goal" && !sessions) { setError(draft.roadmapPlanMode === "custom" ? "Add at least one custom step." : "Choose at least one study day."); return; }
+    if (alarmsAvailable && draft.kind === "task" && draft.dueAt && draft.alarmMode !== "none") {
+      const triggerAt = new Date(draft.dueAt).getTime() - (draft.reminderMinutes ?? 0) * 60_000;
+      if (triggerAt <= Date.now() + 5_000) { setError("Set the due time far enough ahead for this alarm."); return; }
+    }
     onSave(draft);
   };
   const setKind = (kind: DraftKind) => setDraft((current) => ({
@@ -136,18 +152,18 @@ export function TaskEditor({ task, initialScheduledAt, defaultDuration, onClose,
                   <div className="goal-builder-head"><span className="goal-builder-icon"><AlarmClock className="size-4" /></span><div><strong>Alarm behavior</strong><p>Use one fixed study time or a deterministic surprise time inside your chosen window.</p></div></div>
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div className="grid gap-2"><Label>Session time</Label><Select value={draft.scheduleStyle} onValueChange={(value) => update("scheduleStyle", value as ScheduleStyle)}><SelectTrigger className="h-11 w-full border-white/12 bg-[#0b192c] text-white"><SelectValue /></SelectTrigger><SelectContent className="border-white/12 bg-[#0b192c] text-slate-100"><SelectItem value="fixed">Fixed every day</SelectItem><SelectItem value="random">Random inside a window</SelectItem></SelectContent></Select></div>
-                    <div className="grid gap-2"><Label>Alarm mode</Label><Select value={draft.alarmMode} onValueChange={(value) => { const mode = value as AlarmMode; update("alarmMode", mode); update("reminderMinutes", mode === "none" ? null : (draft.reminderMinutes ?? 0)); }}><SelectTrigger className="h-11 w-full border-white/12 bg-[#0b192c] text-white"><SelectValue /></SelectTrigger><SelectContent className="border-white/12 bg-[#0b192c] text-slate-100"><SelectItem value="none">No alarm</SelectItem><SelectItem value="gentle">Gentle reminder</SelectItem><SelectItem value="strict">Red mode · keep chasing me</SelectItem></SelectContent></Select></div>
+                    {alarmsAvailable ? <div className="grid gap-2"><Label>Alarm mode</Label><Select value={draft.alarmMode} onValueChange={(value) => { const mode = value as AlarmMode; update("alarmMode", mode); update("reminderMinutes", mode === "none" ? null : (draft.reminderMinutes ?? 0)); }}><SelectTrigger className="h-11 w-full border-white/12 bg-[#0b192c] text-white"><SelectValue /></SelectTrigger><SelectContent className="border-white/12 bg-[#0b192c] text-slate-100"><SelectItem value="none">No alarm</SelectItem><SelectItem value="gentle">Gentle reminder</SelectItem><SelectItem value="strict">Red mode · keep chasing me</SelectItem></SelectContent></Select></div> : <AlarmInstallGate onClick={onAlarmUnavailable} />}
                     {draft.scheduleStyle === "fixed" ? <div className="grid gap-2 sm:col-span-2"><Label htmlFor="fixed-time">Fixed time</Label><Input id="fixed-time" type="time" value={draft.fixedTime} onChange={(event) => update("fixedTime", event.target.value)} className="h-11 border-white/12 bg-[#0b192c] text-white [color-scheme:dark]" /></div> : <><div className="grid gap-2"><Label htmlFor="random-start">Random from</Label><Input id="random-start" type="time" value={draft.randomStart} onChange={(event) => update("randomStart", event.target.value)} className="h-11 border-white/12 bg-[#0b192c] text-white [color-scheme:dark]" /></div><div className="grid gap-2"><Label htmlFor="random-end">Random until</Label><Input id="random-end" type="time" value={draft.randomEnd} onChange={(event) => update("randomEnd", event.target.value)} className="h-11 border-white/12 bg-[#0b192c] text-white [color-scheme:dark]" /></div></>}
-                    {draft.alarmMode !== "none" && <div className="grid gap-2 sm:col-span-2"><Label>Notify me</Label><Select value={String(draft.reminderMinutes ?? 0)} onValueChange={(value) => update("reminderMinutes", Number(value))}><SelectTrigger className="h-11 w-full border-white/12 bg-[#0b192c] text-white"><SelectValue /></SelectTrigger><SelectContent className="border-white/12 bg-[#0b192c] text-slate-100"><SelectItem value="0">At session time</SelectItem><SelectItem value="10">10 minutes before</SelectItem><SelectItem value="30">30 minutes before</SelectItem><SelectItem value="60">1 hour before</SelectItem></SelectContent></Select></div>}
+                    {alarmsAvailable && draft.alarmMode !== "none" && <div className="grid gap-2 sm:col-span-2"><Label>Notify me</Label><Select value={String(draft.reminderMinutes ?? 0)} onValueChange={(value) => update("reminderMinutes", Number(value))}><SelectTrigger className="h-11 w-full border-white/12 bg-[#0b192c] text-white"><SelectValue /></SelectTrigger><SelectContent className="border-white/12 bg-[#0b192c] text-slate-100"><SelectItem value="0">At session time</SelectItem><SelectItem value="10">10 minutes before</SelectItem><SelectItem value="30">30 minutes before</SelectItem><SelectItem value="60">1 hour before</SelectItem></SelectContent></Select></div>}
                   </div>
-                  {draft.alarmMode === "strict" && <p className="strict-explainer"><AlarmClock className="size-4" />Red mode posts repeated alarms and requires a written completion check-in. The Android build is the reliable killed-app path.</p>}
+                  {alarmsAvailable && draft.alarmMode === "strict" && <p className="strict-explainer"><AlarmClock className="size-4" />Red mode posts repeated alarms and requires a written completion check-in. The Android build is the reliable killed-app path.</p>}
                 </div>
               </>
             ) : (
               <>
                 <div className="grid gap-2"><Label htmlFor="task-notes">Notes <span className="font-normal text-slate-500">optional</span></Label><Textarea id="task-notes" rows={3} value={draft.notes} onChange={(event) => update("notes", event.target.value)} placeholder="Context, links, or your definition of done" className="resize-y border-white/12 bg-white/4 text-white placeholder:text-slate-600" /></div>
                 <div className="grid gap-4 sm:grid-cols-3"><div className="grid gap-2"><Label>Duration</Label><Select value={String(draft.duration)} onValueChange={(value) => update("duration", Number(value))}><SelectTrigger className="h-11 w-full border-white/12 bg-[#0b192c] text-white"><SelectValue /></SelectTrigger><SelectContent className="border-white/12 bg-[#0b192c] text-slate-100">{DURATIONS.map((minutes) => <SelectItem key={minutes} value={String(minutes)}>{formatDuration(minutes)}</SelectItem>)}</SelectContent></Select></div><div className="grid gap-2"><Label>Priority</Label><Select value={draft.priority} onValueChange={(value) => update("priority", value as Priority)}><SelectTrigger className="h-11 w-full border-white/12 bg-[#0b192c] text-white capitalize"><SelectValue /></SelectTrigger><SelectContent className="border-white/12 bg-[#0b192c] text-slate-100">{(["low", "medium", "high"] as Priority[]).map((priority) => <SelectItem key={priority} value={priority} className="capitalize">{priority}</SelectItem>)}</SelectContent></Select></div><div className="grid gap-2"><Label htmlFor="task-due">Due</Label><Input id="task-due" type="datetime-local" value={draft.dueAt} min={task ? undefined : localDateTime()} onChange={(event) => update("dueAt", event.target.value)} className="h-11 border-white/12 bg-[#0b192c] text-white [color-scheme:dark]" /></div><div className="grid gap-2 sm:col-span-2"><Label htmlFor="task-schedule">Schedule <span className="font-normal text-slate-500">optional</span></Label><Input id="task-schedule" type="datetime-local" value={draft.scheduledAt} onChange={(event) => update("scheduledAt", event.target.value)} className="h-11 border-white/12 bg-[#0b192c] text-white [color-scheme:dark]" /></div></div>
-                <div className={`alarm-builder ${draft.alarmMode === "strict" ? "is-strict" : ""}`}><div className="grid gap-4 sm:grid-cols-2"><div className="grid gap-2"><Label>Alarm mode</Label><Select disabled={!draft.dueAt} value={draft.dueAt ? draft.alarmMode : "none"} onValueChange={(value) => { const mode = value as AlarmMode; update("alarmMode", mode); update("reminderMinutes", mode === "none" ? null : (draft.reminderMinutes ?? 0)); }}><SelectTrigger className="h-11 w-full border-white/12 bg-[#0b192c] text-white"><SelectValue /></SelectTrigger><SelectContent className="border-white/12 bg-[#0b192c] text-slate-100"><SelectItem value="none">No alarm</SelectItem><SelectItem value="gentle">Gentle reminder</SelectItem><SelectItem value="strict">Red mode · strict</SelectItem></SelectContent></Select></div><div className="grid gap-2"><Label>When</Label><Select disabled={!draft.dueAt || draft.alarmMode === "none"} value={String(draft.reminderMinutes ?? 0)} onValueChange={(value) => update("reminderMinutes", Number(value))}><SelectTrigger className="h-11 w-full border-white/12 bg-[#0b192c] text-white"><SelectValue /></SelectTrigger><SelectContent className="border-white/12 bg-[#0b192c] text-slate-100"><SelectItem value="0">At due time</SelectItem><SelectItem value="10">10 minutes before</SelectItem><SelectItem value="30">30 minutes before</SelectItem><SelectItem value="60">1 hour before</SelectItem></SelectContent></Select></div></div></div>
+                {alarmsAvailable ? <div className={`alarm-builder ${draft.alarmMode === "strict" ? "is-strict" : ""}`}><div className="grid gap-4 sm:grid-cols-2"><div className="grid gap-2"><Label>Alarm mode</Label><Select disabled={!draft.dueAt} value={draft.dueAt ? draft.alarmMode : "none"} onValueChange={(value) => { const mode = value as AlarmMode; update("alarmMode", mode); update("reminderMinutes", mode === "none" ? null : (draft.reminderMinutes ?? 0)); }}><SelectTrigger className="h-11 w-full border-white/12 bg-[#0b192c] text-white"><SelectValue /></SelectTrigger><SelectContent className="border-white/12 bg-[#0b192c] text-slate-100"><SelectItem value="none">No alarm</SelectItem><SelectItem value="gentle">Gentle reminder</SelectItem><SelectItem value="strict">Red mode · strict</SelectItem></SelectContent></Select></div><div className="grid gap-2"><Label>When</Label><Select disabled={!draft.dueAt || draft.alarmMode === "none"} value={String(draft.reminderMinutes ?? 0)} onValueChange={(value) => update("reminderMinutes", Number(value))}><SelectTrigger className="h-11 w-full border-white/12 bg-[#0b192c] text-white"><SelectValue /></SelectTrigger><SelectContent className="border-white/12 bg-[#0b192c] text-slate-100"><SelectItem value="0">At due time</SelectItem><SelectItem value="10">10 minutes before</SelectItem><SelectItem value="30">30 minutes before</SelectItem><SelectItem value="60">1 hour before</SelectItem></SelectContent></Select></div></div></div> : <AlarmInstallGate onClick={onAlarmUnavailable} />}
               </>
             )}
             {error && <p className="editor-error" role="alert">{error}</p>}
