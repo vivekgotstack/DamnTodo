@@ -575,7 +575,6 @@ export default function PlannerApp() {
   };
 
   const removeRoadmap = (roadmap: Roadmap) => {
-    if (state.tasks.some((task) => task.goalId === roadmap.id && task.status === "scheduled")) { announce("This roadmap still has scheduled sessions, so it cannot be deleted."); return; }
     setDeleteTarget({ kind: "roadmap", roadmap });
   };
 
