@@ -321,10 +321,17 @@ export default function PlannerApp() {
       .slice(0, 24);
     const batchKey = upcoming.map((task) => `${task.id}:${task.scheduledAt}:${task.backlogAlarmStartsAt}:${task.snoozedUntil}:${task.alarmMode}`).join("|");
     if (!batchKey || batchKey === nativeAlarmBatch.current) return;
-    nativeAlarmBatch.current = batchKey;
-    void prepareNativeAlarms(false).then((permission) => {
-      if (permission.granted) return Promise.all(upcoming.map(scheduleNativeTaskAlarm));
-    }).catch(() => undefined);
+    void prepareNativeAlarms().then(async (permission) => {
+      if (!permission.granted) {
+        nativeAlarmBatch.current = "";
+        return;
+      }
+      await Promise.all(upcoming.map((task) => scheduleNativeTaskAlarm(task, permission.exact)));
+      nativeAlarmBatch.current = batchKey;
+    }).catch((error) => {
+      nativeAlarmBatch.current = "";
+      console.error("[alarms] Failed to refresh native alarms", error);
+    });
   }, [native, ready, state.tasks]);
 
   const playReminderTone = useCallback(() => {
@@ -357,10 +364,14 @@ export default function PlannerApp() {
         const body = task.status === "backlog"
           ? "High-priority backlog retry · reminders repeat hourly"
           : `${formatDuration(task.duration)} session ended · reminders repeat hourly until resolved`;
-        if ("Notification" in window && Notification.permission === "granted") {
-          const registration = await navigator.serviceWorker?.ready;
-          if (registration) await registration.showNotification(task.title, { body, icon: "/icon-192.png", badge: "/icon-192.png", tag: task.id });
-          else new Notification(task.title, { body, icon: "/icon-192.png", tag: task.id });
+        if (!native && "Notification" in window && Notification.permission === "granted") {
+          try {
+            const registration = await navigator.serviceWorker?.getRegistration();
+            if (registration) await registration.showNotification(task.title, { body, icon: "/icon-192.png", badge: "/icon-192.png", tag: task.id });
+            else new Notification(task.title, { body, icon: "/icon-192.png", tag: task.id });
+          } catch (error) {
+            console.error("[reminders] Failed to display web notification", { taskId: task.id, error });
+          }
         }
         if (task.alarmMode === "strict") {
           playReminderTone();
@@ -381,7 +392,7 @@ export default function PlannerApp() {
       clearInterval(timer);
       document.removeEventListener("visibilitychange", checkReminders);
     };
-  }, [alarmsAvailable, announce, enqueueAlarmMoment, playReminderTone, ready, state.tasks]);
+  }, [alarmsAvailable, announce, enqueueAlarmMoment, native, playReminderTone, ready, state.tasks]);
 
   const backlog = useMemo(() => state.tasks.filter((task) => task.status === "backlog").sort(taskSort), [state.tasks]);
   const completed = useMemo(() => state.tasks.filter((task) => task.status === "completed").sort((a, b) => (b.completedAt ?? "").localeCompare(a.completedAt ?? "")), [state.tasks]);
@@ -537,9 +548,9 @@ export default function PlannerApp() {
         announce(permission === "granted" ? "Notification permission granted. Keep the installed app available for web follow-ups." : "Task saved, but notifications are blocked. Enable them in app settings.");
         return;
       }
-      const permission = await prepareNativeAlarms(task.alarmMode === "strict");
+      const permission = await prepareNativeAlarms({ requestNotifications: true, requestExact: task.alarmMode === "strict" });
       if (!permission.granted) { announce("Task saved, but Android notification permission is off."); return; }
-      await scheduleNativeTaskAlarm(task);
+      await scheduleNativeTaskAlarm(task, permission.exact);
       announce(task.alarmMode === "strict" && !permission.exact ? "Notification allowed. Enable Alarms & reminders for exact red alarms." : "Android alarm permission granted and the alarm is scheduled.");
     } catch {
       announce("The task was saved, but Android could not schedule its alarm yet.");
@@ -675,8 +686,23 @@ export default function PlannerApp() {
       return;
     }
     if (isNativeApp()) {
-      const result = await prepareNativeAlarms(true);
-      announce(result.granted ? "Android alarms are enabled." : "Allow notifications in Android settings to use alarms.");
+      try {
+        const result = await prepareNativeAlarms({ requestNotifications: true, requestExact: true });
+        if (!result.granted) {
+          announce("Allow notifications in Android settings to use alarms.");
+          return;
+        }
+        const upcoming = state.tasks
+          .filter((task) => task.status !== "completed" && task.alarmMode !== "none" && nextReminderOccurrence(task) !== null)
+          .sort(taskSort)
+          .slice(0, 24);
+        await Promise.all(upcoming.map((task) => scheduleNativeTaskAlarm(task, result.exact)));
+        nativeAlarmBatch.current = upcoming.map((task) => `${task.id}:${task.scheduledAt}:${task.backlogAlarmStartsAt}:${task.snoozedUntil}:${task.alarmMode}`).join("|");
+        announce(result.exact ? "Android alarms are enabled and scheduled." : "Notifications are scheduled. Enable Alarms & reminders for exact timing.");
+      } catch (error) {
+        console.error("[alarms] Failed to configure native alarms", error);
+        announce("Android could not schedule alarms. Check notification permissions and try again.");
+      }
       return;
     }
     if (!("Notification" in window)) {

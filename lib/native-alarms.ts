@@ -4,6 +4,11 @@ import { nextDayRetryStart, nextReminderOccurrence, type Task } from "./planner"
 const CHANNEL_ID = "damntodo-strict";
 const FOLLOW_UPS = 24;
 
+export interface NativeAlarmAccessOptions {
+  requestNotifications?: boolean;
+  requestExact?: boolean;
+}
+
 function hash(value: string) {
   let result = 2166136261;
   for (let index = 0; index < value.length; index += 1) {
@@ -21,11 +26,11 @@ export function isNativeApp() {
   return Capacitor.isNativePlatform();
 }
 
-export async function prepareNativeAlarms(requestExact = false) {
+export async function prepareNativeAlarms({ requestNotifications = false, requestExact = false }: NativeAlarmAccessOptions = {}) {
   if (!isNativeApp()) return { native: false, exact: false, granted: false };
   const { LocalNotifications } = await import("@capacitor/local-notifications");
   let permission = await LocalNotifications.checkPermissions();
-  if (permission.display !== "granted") permission = await LocalNotifications.requestPermissions();
+  if (permission.display !== "granted" && requestNotifications) permission = await LocalNotifications.requestPermissions();
   await LocalNotifications.createChannel({
     id: CHANNEL_ID,
     name: "Strict alarms",
@@ -47,7 +52,7 @@ export async function prepareNativeAlarms(requestExact = false) {
   return { native: true, exact, granted: permission.display === "granted" };
 }
 
-export async function scheduleNativeTaskAlarm(task: Task) {
+export async function scheduleNativeTaskAlarm(task: Task, exact = false) {
   if (!isNativeApp() || task.status === "completed" || task.alarmMode === "none") return;
   const { LocalNotifications } = await import("@capacitor/local-notifications");
   await cancelNativeTaskAlarm(task.id);
@@ -74,9 +79,10 @@ export async function scheduleNativeTaskAlarm(task: Task) {
       largeBody: strict ? `Open DamnTodo to complete ${task.title}, snooze one hour, or move it to a high-priority backlog retry.` : undefined,
       channelId: CHANNEL_ID,
       schedule: { at: new Date(at), allowWhileIdle: true },
+      foreground: true,
       ongoing: strict,
       autoCancel: !strict,
-      isExactNotification: true,
+      isExactNotification: exact,
       extra: { taskId: task.id, strict },
     })),
   });
