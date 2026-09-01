@@ -9,10 +9,17 @@ export const metadata: Metadata = {
   description: "A calm, private, offline planner that turns your backlog into a realistic schedule.",
   applicationName: "DamnTodo",
   manifest: "/manifest.webmanifest",
+  icons: {
+    icon: [
+      { url: "/icon.svg", type: "image/svg+xml" },
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+    ],
+    apple: [{ url: "/icon-192.png", sizes: "192x192", type: "image/png" }],
+  },
   appleWebApp: {
     capable: true,
     title: "DamnTodo",
-    statusBarStyle: "black-translucent",
+    statusBarStyle: "default",
   },
   formatDetection: { telephone: false },
 };
@@ -21,7 +28,7 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: "#07111f",
+  themeColor: "#9fd4f5",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

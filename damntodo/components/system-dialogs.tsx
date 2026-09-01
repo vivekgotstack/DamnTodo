@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import Image from "next/image";
+import { useEffect, useState } from "react";
 import { AlarmClock, BellRing, CheckCircle2, Download, LockKeyhole, Smartphone } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,6 +11,63 @@ import { Progress } from "@/components/ui/progress";
 import { ShimmerButton } from "@/components/ui/shimmer-button";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDuration, type Task } from "@/lib/planner";
+
+export function MotivationMoment({ mode, taskTitle, onFinish }: {
+  mode: "opening" | "alarm";
+  taskTitle?: string;
+  onFinish: () => void;
+}) {
+  const [videoReady, setVideoReady] = useState(false);
+  const opening = mode === "opening";
+
+  useEffect(() => {
+    if (!opening) return;
+    const fallback = window.setTimeout(onFinish, 3200);
+    return () => window.clearTimeout(fallback);
+  }, [onFinish, opening]);
+
+  return (
+    <section
+      className={`motivation-moment ${opening ? "is-opening" : "is-alarm"}`}
+      role={opening ? "status" : "dialog"}
+      aria-modal={opening ? undefined : true}
+      aria-label={opening ? "Opening DamnTodo" : `Alarm for ${taskTitle ?? "your task"}`}
+    >
+      <Image
+        className="motivation-poster"
+        src="/motivation-one.webp"
+        alt="A mystical guardian raising one finger to signal one decisive chance"
+        fill
+        priority={opening}
+        sizes="100vw"
+      />
+      {!opening && (
+        <video
+          className={`motivation-video ${videoReady ? "is-ready" : ""}`}
+          autoPlay
+          muted
+          playsInline
+          loop
+          preload="auto"
+          poster="/motivation-one.webp"
+          onCanPlay={() => setVideoReady(true)}
+        >
+          <source src="/motivation-one.mp4" type="video/mp4" />
+        </video>
+      )}
+      <div className="motivation-vignette" />
+      {!opening && (
+        <div className="motivation-callout">
+          <span>One chance. Make it count.</span>
+          <h2>{taskTitle}</h2>
+          <Button onClick={onFinish} className="h-12 bg-white px-6 text-slate-950 shadow-2xl hover:bg-sky-50">
+            I&apos;m ready
+          </Button>
+        </div>
+      )}
+    </section>
+  );
+}
 
 export function InstallDialog({ open, installed, native, onClose, onInstall }: {
   open: boolean;

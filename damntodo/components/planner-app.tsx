@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import {
   AlarmClock,
   ArrowLeft,
@@ -38,7 +39,7 @@ import { type FormEvent, type MouseEvent, useCallback, useEffect, useMemo, useRe
 import skyDawn from "@/public/sky-dawn.webp";
 import logoMark from "@/public/logo-mark.png";
 import { TaskEditor } from "@/components/task-editor";
-import { InstallDialog, StrictAlarmDialog } from "@/components/system-dialogs";
+import { InstallDialog, MotivationMoment, StrictAlarmDialog } from "@/components/system-dialogs";
 import { ShimmerButton } from "@/components/ui/shimmer-button";
 import { Badge } from "@/components/ui/badge";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -117,6 +118,7 @@ const isView = (value: string | null): value is View =>
 export default function PlannerApp() {
   const [state, setState] = useState<PlannerState>(DEFAULT_STATE);
   const [ready, setReady] = useState(false);
+  const [showOpening, setShowOpening] = useState(true);
   const [view, setView] = useState<View>("dashboard");
   const [editor, setEditor] = useState<{ task: Task | null; scheduledAt?: string } | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -127,6 +129,7 @@ export default function PlannerApp() {
   const [installed, setInstalled] = useState(false);
   const native = useSyncExternalStore(() => () => undefined, isNativeApp, () => false);
   const [activeAlarmId, setActiveAlarmId] = useState<string | null>(null);
+  const [alarmMomentIds, setAlarmMomentIds] = useState<string[]>([]);
   const [deleteTarget, setDeleteTarget] = useState<{ kind: "task"; task: Task } | { kind: "roadmap"; roadmap: Roadmap } | null>(null);
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>("default");
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -137,6 +140,12 @@ export default function PlannerApp() {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), 3400);
   }, []);
+
+  const enqueueAlarmMoment = useCallback((taskId: string) => {
+    setAlarmMomentIds((current) => current.includes(taskId) ? current : [...current, taskId]);
+  }, []);
+
+  const finishOpening = useCallback(() => setShowOpening(false), []);
 
   useEffect(() => {
     let active = true;
@@ -225,9 +234,9 @@ export default function PlannerApp() {
 
   useEffect(() => {
     let stop: () => void = () => undefined;
-    void listenForNativeAlarm((taskId) => setActiveAlarmId(taskId)).then((dispose) => { stop = dispose; });
+    void listenForNativeAlarm(enqueueAlarmMoment).then((dispose) => { stop = dispose; });
     return () => stop();
-  }, []);
+  }, [enqueueAlarmMoment]);
 
   useEffect(() => {
     if (!ready || !native) return;
@@ -290,7 +299,7 @@ export default function PlannerApp() {
         }
         playReminderTone();
         announce(`Reminder: ${task.title}`);
-        if (task.alarmMode === "strict") setActiveAlarmId(task.id);
+        enqueueAlarmMoment(task.id);
       }
       setState((current) => ({
         ...current,
@@ -308,7 +317,7 @@ export default function PlannerApp() {
       clearInterval(timer);
       document.removeEventListener("visibilitychange", checkReminders);
     };
-  }, [announce, playReminderTone, ready, state.tasks]);
+  }, [announce, enqueueAlarmMoment, playReminderTone, ready, state.tasks]);
 
   const backlog = useMemo(() => state.tasks.filter((task) => task.status === "backlog").sort(taskSort), [state.tasks]);
   const completed = useMemo(() => state.tasks.filter((task) => task.status === "completed").sort((a, b) => (b.completedAt ?? "").localeCompare(a.completedAt ?? "")), [state.tasks]);
@@ -319,6 +328,15 @@ export default function PlannerApp() {
   const activeTasks = state.tasks.filter((task) => task.status !== "completed");
   const scheduledTasks = activeTasks.filter((task) => task.status === "scheduled");
   const completionRate = state.tasks.length ? Math.round((completed.length / state.tasks.length) * 100) : 0;
+  const activeAlarmMoment = activeAlarmId ? null : state.tasks.find((task) => task.id === alarmMomentIds[0]) ?? null;
+
+  const finishAlarmMoment = useCallback(() => {
+    const taskId = alarmMomentIds[0];
+    if (!taskId) return;
+    const task = state.tasks.find((item) => item.id === taskId);
+    setAlarmMomentIds((current) => current.slice(1));
+    if (task?.alarmMode === "strict") setActiveAlarmId(task.id);
+  }, [alarmMomentIds, state.tasks]);
 
   const saveTask = async (draft: TaskDraft) => {
     if (editor?.task) {
@@ -560,6 +578,7 @@ export default function PlannerApp() {
   const currentKicker = view === "dashboard" ? `${formatDayHeading(new Date())} · private and offline` : view === "today" ? "Today, without the noise" : view === "schedule" ? "Balanced automatically, editable always" : view === "backlog" ? `${backlog.length} task${backlog.length === 1 ? "" : "s"} waiting for a place` : `${completed.length} completed task${completed.length === 1 ? "" : "s"}`;
 
   return (
+    <MotionConfig reducedMotion="user">
     <main className="app-frame">
       <Image className="sky-image" src={skyDawn} alt="" fill priority sizes="100vw" placeholder="blur" />
       <div className="sky-shade" />
@@ -573,10 +592,10 @@ export default function PlannerApp() {
             {NAVIGATION.map(({ id, label, icon: Icon }) => {
               const count = countForView(id, state.tasks);
               return (
-                <button key={id} className={`nav-item ${view === id ? "active" : ""}`} onClick={() => openView(id)} aria-current={view === id ? "page" : undefined}>
+                <motion.button key={id} whileTap={{ scale: 0.96 }} className={`nav-item ${view === id ? "active" : ""}`} onClick={() => openView(id)} aria-current={view === id ? "page" : undefined}>
                   <span><Icon size={18} /> <span className="nav-label">{label}</span></span>
                   {count > 0 && <b>{count}</b>}
-                </button>
+                </motion.button>
               );
             })}
           </nav>
@@ -600,8 +619,16 @@ export default function PlannerApp() {
             </div>
           </header>
 
-          {!ready ? <LoadingSurface /> : (
-            <div className="view-stage" key={view}>
+          <AnimatePresence mode="wait" initial={false}>
+          {!ready ? <motion.div key="loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}><LoadingSurface /></motion.div> : (
+            <motion.div
+              className="view-stage"
+              key={view}
+              initial={{ opacity: 0, y: 12, filter: "blur(5px)" }}
+              animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+              exit={{ opacity: 0, y: -8, filter: "blur(4px)" }}
+              transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+            >
               {view === "dashboard" && (
                 <DashboardView
                   todayTasks={todayTasks}
@@ -670,8 +697,9 @@ export default function PlannerApp() {
               {view === "completed" && (
                 <CompletedView tasks={completed} onToggle={toggleComplete} onDelete={removeTask} />
               )}
-            </div>
+            </motion.div>
           )}
+          </AnimatePresence>
         </div>
       </section>
 
@@ -701,6 +729,8 @@ export default function PlannerApp() {
         />
       )}
       <InstallDialog open={installInfoOpen} installed={installed} native={native} onClose={() => setInstallInfoOpen(false)} onInstall={() => void installApp()} />
+      {showOpening && <MotivationMoment mode="opening" onFinish={finishOpening} />}
+      {activeAlarmMoment && <MotivationMoment mode="alarm" taskTitle={activeAlarmMoment.title} onFinish={finishAlarmMoment} />}
       {activeAlarmId && state.tasks.find((task) => task.id === activeAlarmId) && (
         <StrictAlarmDialog task={state.tasks.find((task) => task.id === activeAlarmId)!} onComplete={completeStrictAlarm} onSnooze={snoozeStrictAlarm} />
       )}
@@ -718,8 +748,11 @@ export default function PlannerApp() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      {toast && <div className="toast" role="status"><Check size={16} />{toast}</div>}
+      <AnimatePresence>
+        {toast && <motion.div className="toast" role="status" initial={{ opacity: 0, y: 18, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: 0.98 }} transition={{ duration: 0.22 }}><Check size={16} />{toast}</motion.div>}
+      </AnimatePresence>
     </main>
+    </MotionConfig>
   );
 }
 
@@ -861,7 +894,14 @@ function RoadmapCard({ roadmap, tasks, onDelete }: { roadmap: Roadmap; tasks: Ta
 function TaskCard({ task, compact = false, ...actions }: { task: Task; compact?: boolean } & TaskActions) {
   const due = dueState(task);
   return (
-    <article className={`task-card due-${due} ${compact ? "compact" : ""} ${task.status === "completed" ? "is-complete" : ""}`}>
+    <motion.article
+      layout
+      initial={{ opacity: 0, y: 8, scale: 0.985 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      whileHover={{ x: 2 }}
+      transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+      className={`task-card due-${due} ${compact ? "compact" : ""} ${task.status === "completed" ? "is-complete" : ""}`}
+    >
       <button className="task-check" onClick={() => actions.onToggle(task)} aria-label={task.status === "completed" ? `Restore ${task.title}` : `Complete ${task.title}`}>
         {task.status === "completed" ? <Check size={14} /> : <Circle size={16} />}
       </button>
@@ -882,7 +922,7 @@ function TaskCard({ task, compact = false, ...actions }: { task: Task; compact?:
         {actions.onEdit && <button onClick={() => actions.onEdit?.(task)} title="Edit" aria-label={`Edit ${task.title}`}><Pencil size={15} /></button>}
         <button onClick={() => actions.onDelete(task)} title="Delete" aria-label={`Delete ${task.title}`}><Trash2 size={15} /></button>
       </div>
-    </article>
+    </motion.article>
   );
 }
 
@@ -948,7 +988,7 @@ function ScheduleView({ tasks, roadmaps, backlog, settings, onEdit, onToggle, on
       date.setDate(date.getDate() + index);
       return date;
     });
-  }, [tasks]);
+  }, []);
   return (
     <div className="schedule-layout">
       <section className="roadmap-overview">
