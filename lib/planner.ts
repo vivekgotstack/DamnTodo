@@ -261,6 +261,11 @@ export function createRoadmap(draft: TaskDraft) {
   const start = new Date(`${draft.availableFrom}T00:00:00`);
   const endDate = draft.dueAt.slice(0, 10);
   const deadline = new Date(`${endDate}T23:59:59`);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  if (start < today) {
+    return { roadmap: null as Roadmap | null, tasks: [] as Task[], error: "A roadmap cannot start in the past." };
+  }
   if (Number.isNaN(start.getTime()) || Number.isNaN(deadline.getTime()) || deadline < start) {
     return { roadmap: null as Roadmap | null, tasks: [] as Task[], error: "The end date must be after the start date." };
   }

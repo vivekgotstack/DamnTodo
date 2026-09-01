@@ -76,6 +76,7 @@ export function TaskEditor({ task, initialScheduledAt, defaultDuration, alarmsAv
     event.preventDefault();
     if (!draft.title.trim()) { setError("Give this a clear name first."); return; }
     if (draft.kind === "goal" && !draft.dueAt) { setError("Choose how long this roadmap should run."); return; }
+    if (draft.kind === "goal" && draft.availableFrom < localDateTime().slice(0, 10)) { setError("A roadmap cannot start in the past. Choose today or a future date."); return; }
     if (draft.kind === "goal" && !sessions) { setError(draft.roadmapPlanMode === "custom" ? "Add at least one custom step." : "Choose at least one study day."); return; }
     if (draft.kind === "task" && draft.scheduledAt && new Date(draft.scheduledAt).getTime() < Date.now() - 60_000) { setError("Choose a future start time."); return; }
     if (draft.kind === "task" && draft.scheduledAt && draft.dueAt && new Date(draft.scheduledAt) > new Date(draft.dueAt)) { setError("The start time must be before the deadline."); return; }
