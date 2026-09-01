@@ -1,4 +1,4 @@
-import { DEFAULT_STATE, type PlannerSettings, type PlannerState, type Roadmap, type Task } from "./planner";
+import { DEFAULT_STATE, type Plan, type PlannerSettings, type PlannerState, type Roadmap, type Task } from "./planner";
 
 const DB_NAME = "damntodo-offline";
 const STORE_NAME = "planner";
@@ -96,6 +96,7 @@ type StoredState = {
   version?: number;
   tasks?: Task[];
   roadmaps?: Roadmap[];
+  plans?: Plan[];
   settings?: Partial<PlannerSettings>;
 };
 
@@ -135,12 +136,15 @@ function roadmapsFromLegacyTasks(tasks: Task[], settings: PlannerSettings) {
 export function upgradePlannerState(value: unknown): PlannerState | null {
   if (!value || typeof value !== "object") return null;
   const stored = value as StoredState;
-  if (!Array.isArray(stored.tasks) || (stored.version !== 2 && stored.version !== 3)) return null;
+  if (!Array.isArray(stored.tasks) || (stored.version !== 2 && stored.version !== 3 && stored.version !== 4)) return null;
   const settings = { ...DEFAULT_STATE.settings, ...stored.settings };
   const tasks = stored.tasks.map((task) => ({
     ...task,
     alarmMode: task.alarmMode ?? (task.reminderMinutes === null ? "none" : "gentle"),
+    alarmModeLocked: task.alarmModeLocked ?? Boolean(task.scheduledAt),
     snoozedUntil: task.snoozedUntil ?? null,
+    backlogAlarmTime: task.backlogAlarmTime ?? "09:00",
+    backlogAlarmStartsAt: task.backlogAlarmStartsAt ?? null,
     goalId: task.goalId ?? null,
     sessionIndex: task.sessionIndex ?? null,
     sessionCount: task.sessionCount ?? null,
@@ -149,9 +153,10 @@ export function upgradePlannerState(value: unknown): PlannerState | null {
     missedAt: task.missedAt ?? null,
   }));
   return {
-    version: 3,
+    version: 4,
     tasks,
-    roadmaps: stored.version === 3 && Array.isArray(stored.roadmaps) ? stored.roadmaps : roadmapsFromLegacyTasks(tasks, settings),
+    roadmaps: (stored.version === 3 || stored.version === 4) && Array.isArray(stored.roadmaps) ? stored.roadmaps : roadmapsFromLegacyTasks(tasks, settings),
+    plans: stored.version === 4 && Array.isArray(stored.plans) ? stored.plans : [],
     settings,
   };
 }

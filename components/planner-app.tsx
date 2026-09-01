@@ -25,6 +25,7 @@ import {
   ListChecks,
   LockKeyhole,
   Map as MapIcon,
+  NotebookPen,
   Pencil,
   Plus,
   RotateCcw,
@@ -39,7 +40,7 @@ import {
 import { type FormEvent, type MouseEvent, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import logoMark from "@/public/logo-mark.png";
 import { TaskEditor } from "@/components/task-editor";
-import { InstallDialog, MotivationMoment, StrictAlarmDialog } from "@/components/system-dialogs";
+import { BacklogAlarmDialog, InstallDialog, MotivationMoment, StrictAlarmDialog } from "@/components/system-dialogs";
 import { ShimmerButton } from "@/components/ui/shimmer-button";
 import { Badge } from "@/components/ui/badge";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -50,6 +51,7 @@ import {
   autoSchedule,
   createRoadmap,
   createTask,
+  currentReminderOccurrence,
   dueState,
   emptyDraft,
   formatDateTime,
@@ -58,10 +60,12 @@ import {
   isSameDay,
   localDateTime,
   nextAvailableSlotForDate,
+  nextReminderOccurrence,
   rollOverMissedTasks,
   scheduleToday,
   type PlannerSettings,
   type PlannerState,
+  type Plan,
   type Roadmap,
   type Task,
   type TaskDraft,
@@ -69,7 +73,7 @@ import {
 import { loadState, saveState, upgradePlannerState } from "@/lib/storage";
 import { cancelNativeTaskAlarm, isNativeApp, listenForNativeAlarm, prepareNativeAlarms, scheduleNativeTaskAlarm } from "@/lib/native-alarms";
 
-type View = "dashboard" | "today" | "schedule" | "backlog" | "completed";
+type View = "dashboard" | "today" | "schedule" | "backlog" | "plans" | "completed";
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -81,6 +85,7 @@ const NAVIGATION: Array<{ id: View; label: string; icon: typeof CalendarDays }> 
   { id: "today", label: "Today", icon: CalendarDays },
   { id: "schedule", label: "Schedule", icon: Archive },
   { id: "backlog", label: "Backlog", icon: Inbox },
+  { id: "plans", label: "Plans", icon: NotebookPen },
   { id: "completed", label: "Completed", icon: CheckCircle2 },
 ];
 
@@ -102,20 +107,29 @@ const dateKey = (value: Date | string) => {
   return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
 };
 
+const nextDayAt = (time = "09:00") => {
+  const next = new Date();
+  next.setDate(next.getDate() + 1);
+  const [hours, minutes] = time.split(":").map(Number);
+  next.setHours(hours, minutes, 0, 0);
+  return next.toISOString();
+};
+
 const taskSort = (a: Task, b: Task) =>
   (a.scheduledAt ?? a.dueAt ?? a.createdAt).localeCompare(b.scheduledAt ?? b.dueAt ?? b.createdAt);
 
-function countForView(view: View, tasks: Task[]) {
+function countForView(view: View, tasks: Task[], plans: Plan[]) {
   if (view === "today") return tasks.filter((task) => task.status === "scheduled" && isSameDay(task.scheduledAt)).length;
   if (view === "backlog") return tasks.filter((task) => task.status === "backlog").length;
   if (view === "completed") return tasks.filter((task) => task.status === "completed").length;
+  if (view === "plans") return plans.length;
   return 0;
 }
 
 const VIEW_KEY = "damntodo:active-view";
 const SCROLL_KEY = "damntodo:scroll:";
 const isView = (value: string | null): value is View =>
-  value === "dashboard" || value === "today" || value === "schedule" || value === "backlog" || value === "completed";
+  value === "dashboard" || value === "today" || value === "schedule" || value === "backlog" || value === "plans" || value === "completed";
 
 export default function PlannerApp() {
   const [state, setState] = useState<PlannerState>(DEFAULT_STATE);
@@ -135,6 +149,7 @@ export default function PlannerApp() {
   const alarmsAvailable = native || runningAsApp;
   const [activeAlarmId, setActiveAlarmId] = useState<string | null>(null);
   const [alarmMomentIds, setAlarmMomentIds] = useState<string[]>([]);
+  const [backlogAlarmTargetId, setBacklogAlarmTargetId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ kind: "task"; task: Task } | { kind: "roadmap"; roadmap: Roadmap } | null>(null);
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>("default");
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -292,10 +307,10 @@ export default function PlannerApp() {
   useEffect(() => {
     if (!ready || !native) return;
     const upcoming = state.tasks
-      .filter((task) => task.status === "scheduled" && task.alarmMode !== "none" && task.scheduledAt && new Date(task.scheduledAt) > new Date())
+      .filter((task) => task.status !== "completed" && task.alarmMode !== "none" && nextReminderOccurrence(task) !== null)
       .sort(taskSort)
       .slice(0, 24);
-    const batchKey = upcoming.map((task) => `${task.id}:${task.scheduledAt}:${task.alarmMode}`).join("|");
+    const batchKey = upcoming.map((task) => `${task.id}:${task.scheduledAt}:${task.backlogAlarmStartsAt}:${task.snoozedUntil}:${task.alarmMode}`).join("|");
     if (!batchKey || batchKey === nativeAlarmBatch.current) return;
     nativeAlarmBatch.current = batchKey;
     void prepareNativeAlarms(false).then((permission) => {
@@ -321,46 +336,33 @@ export default function PlannerApp() {
   }, [state.settings.sound]);
 
   useEffect(() => {
-    if (!activeAlarmId) return;
-    playReminderTone();
-    const repeat = setInterval(playReminderTone, 12_000);
-    return () => clearInterval(repeat);
-  }, [activeAlarmId, playReminderTone]);
-
-  useEffect(() => {
     if (!ready || !alarmsAvailable) return;
     const checkReminders = async () => {
       const now = Date.now();
-      const due = state.tasks.filter((task) => {
-        const alarmAt = task.goalId && task.scheduledAt ? task.scheduledAt : task.dueAt;
-        if (task.status === "completed" || !alarmAt || task.reminderMinutes === null || task.alarmMode === "none") return false;
-        const reminderKey = `${alarmAt}:${task.reminderMinutes}:${task.snoozedUntil ?? ""}`;
-        const triggerAt = task.snoozedUntil ? new Date(task.snoozedUntil).getTime() : new Date(alarmAt).getTime() - task.reminderMinutes * 60_000;
-        const configuredAt = new Date(task.updatedAt || task.createdAt).getTime();
-        if (!task.snoozedUntil && triggerAt < configuredAt - 5_000) return false;
-        return triggerAt <= now && task.remindedFor !== reminderKey;
+      const due = state.tasks.flatMap((task) => {
+        const occurrence = currentReminderOccurrence(task, now);
+        return occurrence && task.remindedFor !== occurrence.key ? [{ task, occurrence }] : [];
       });
       if (!due.length) return;
-      for (const task of due) {
-        const body = task.goalId && task.scheduledAt
-          ? `Roadmap session · ${formatDuration(task.duration)} · scheduled ${formatDateTime(task.scheduledAt)}`
-          : task.dueAt ? `Due ${formatDateTime(task.dueAt)} · ${formatDuration(task.duration)}` : "Task reminder";
+      for (const { task } of due) {
+        const body = task.status === "backlog"
+          ? "High-priority backlog retry · reminders repeat hourly"
+          : `${formatDuration(task.duration)} session ended · reminders repeat hourly until resolved`;
         if ("Notification" in window && Notification.permission === "granted") {
           const registration = await navigator.serviceWorker?.ready;
           if (registration) await registration.showNotification(task.title, { body, icon: "/icon-192.png", badge: "/icon-192.png", tag: task.id });
           else new Notification(task.title, { body, icon: "/icon-192.png", tag: task.id });
         }
-        playReminderTone();
-        announce(`Reminder: ${task.title}`);
-        enqueueAlarmMoment(task.id);
+        if (task.alarmMode === "strict") {
+          playReminderTone();
+          enqueueAlarmMoment(task.id);
+        }
+        announce(`${task.alarmMode === "strict" ? "Red alarm" : "Hourly reminder"}: ${task.title}`);
       }
+      const dueKeys = new Map(due.map(({ task, occurrence }) => [task.id, occurrence.key]));
       setState((current) => ({
         ...current,
-        tasks: current.tasks.map((task) => {
-          const fired = due.find((item) => item.id === task.id);
-          const alarmAt = fired?.goalId && fired.scheduledAt ? fired.scheduledAt : fired?.dueAt;
-          return fired ? { ...task, remindedFor: `${alarmAt}:${fired.reminderMinutes}:${fired.snoozedUntil ?? ""}` } : task;
-        }),
+        tasks: current.tasks.map((task) => dueKeys.has(task.id) ? { ...task, remindedFor: dueKeys.get(task.id)! } : task),
       }));
     };
     void checkReminders();
@@ -382,6 +384,7 @@ export default function PlannerApp() {
   const scheduledTasks = activeTasks.filter((task) => task.status === "scheduled");
   const completionRate = state.tasks.length ? Math.round((completed.length / state.tasks.length) * 100) : 0;
   const activeAlarmMoment = activeAlarmId ? null : state.tasks.find((task) => task.id === alarmMomentIds[0]) ?? null;
+  const backlogAlarmTarget = state.tasks.find((task) => task.id === backlogAlarmTargetId) ?? null;
 
   const finishAlarmMoment = useCallback(() => {
     const taskId = alarmMomentIds[0];
@@ -395,32 +398,57 @@ export default function PlannerApp() {
     const taskId = alarmMomentIds[0];
     if (!taskId) return;
     const task = state.tasks.find((item) => item.id === taskId);
+    if (!task) { setAlarmMomentIds((current) => current.slice(1)); return; }
+    const occurrence = currentReminderOccurrence(task);
+    const updated: Task = { ...task, remindedFor: occurrence?.key ?? task.remindedFor, updatedAt: new Date().toISOString() };
     setAlarmMomentIds((current) => current.slice(1));
-    setState((current) => ({
-      ...current,
-      tasks: current.tasks.map((item) => {
-        if (item.id !== taskId) return item;
-        const alarmAt = item.goalId && item.scheduledAt ? item.scheduledAt : item.dueAt;
-        return { ...item, snoozedUntil: null, remindedFor: `${alarmAt}:${item.reminderMinutes}:`, updatedAt: new Date().toISOString() };
-      }),
-    }));
-    void cancelNativeTaskAlarm(taskId);
+    setState((current) => ({ ...current, tasks: current.tasks.map((item) => item.id === taskId ? updated : item) }));
+    void cancelNativeTaskAlarm(taskId).then(() => native ? scheduleNativeTaskAlarm(updated) : undefined);
     setActiveAlarmId((current) => current === taskId ? null : current);
-    announce(task ? `Stopped: ${task.title}` : "Alarm stopped.");
-  }, [alarmMomentIds, announce, state.tasks]);
+    announce(`Stopped for now: ${task.title}. It returns in one hour.`);
+  }, [alarmMomentIds, announce, native, state.tasks]);
 
   const snoozeAlarmMoment = useCallback(() => {
     const taskId = alarmMomentIds[0];
     if (!taskId) return;
     const task = state.tasks.find((item) => item.id === taskId);
     if (!task) { setAlarmMomentIds((current) => current.slice(1)); return; }
-    const updated: Task = { ...task, snoozedUntil: new Date(Date.now() + 10 * 60_000).toISOString(), remindedFor: null, updatedAt: new Date().toISOString() };
+    const updated: Task = { ...task, snoozedUntil: new Date(Date.now() + 60 * 60_000).toISOString(), remindedFor: null, updatedAt: new Date().toISOString() };
     setState((current) => ({ ...current, tasks: current.tasks.map((item) => item.id === taskId ? updated : item) }));
     setAlarmMomentIds((current) => current.slice(1));
     setActiveAlarmId((current) => current === taskId ? null : current);
     if (native) void scheduleNativeTaskAlarm(updated);
-    announce("Alarm snoozed for 10 minutes.");
+    announce("Alarm snoozed for one hour.");
   }, [alarmMomentIds, announce, native, state.tasks]);
+
+  const beginAlarmBacklogMove = useCallback((taskId: string) => {
+    setAlarmMomentIds((current) => current.filter((id) => id !== taskId));
+    setActiveAlarmId((current) => current === taskId ? null : current);
+    setBacklogAlarmTargetId(taskId);
+  }, []);
+
+  const moveTaskToBacklog = useCallback((task: Task, time = task.backlogAlarmTime ?? "09:00") => {
+    const keepsAlarm = task.alarmMode !== "none";
+    const updated: Task = {
+      ...task,
+      status: "backlog",
+      priority: task.alarmMode === "strict" ? "high" : task.priority,
+      plannedFor: task.plannedFor ?? task.scheduledAt,
+      scheduledAt: null,
+      backlogAlarmTime: time || "09:00",
+      backlogAlarmStartsAt: keepsAlarm ? nextDayAt(time || "09:00") : null,
+      snoozedUntil: null,
+      remindedFor: null,
+      missedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    setState((current) => ({ ...current, tasks: current.tasks.map((item) => item.id === task.id ? updated : item) }));
+    void cancelNativeTaskAlarm(task.id).then(() => native && keepsAlarm ? scheduleNativeTaskAlarm(updated) : undefined);
+    setAlarmMomentIds((current) => current.filter((id) => id !== task.id));
+    setActiveAlarmId((current) => current === task.id ? null : current);
+    setBacklogAlarmTargetId(null);
+    announce(keepsAlarm ? `Moved to high-priority backlog. Hourly follow-ups start tomorrow at ${time || "09:00"}.` : "Moved to backlog.");
+  }, [announce, native]);
 
   const saveTask = async (draft: TaskDraft) => {
     const safeDraft: TaskDraft = alarmsAvailable ? draft : { ...draft, alarmMode: "none", reminderMinutes: null };
@@ -440,6 +468,11 @@ export default function PlannerApp() {
     }
     if (editor?.task) {
       const previous = editor.task;
+      const status = safeDraft.scheduledAt ? "scheduled" : previous.status === "completed" ? "completed" : "backlog";
+      const alarmMode = previous.alarmModeLocked
+        ? (previous.alarmMode ?? "none")
+        : safeDraft.scheduledAt ? safeDraft.alarmMode : "none";
+      const backlogAlarmTime = safeDraft.backlogAlarmTime || previous.backlogAlarmTime || "09:00";
       const updated: Task = {
         ...previous,
         title: safeDraft.title.trim(),
@@ -450,10 +483,16 @@ export default function PlannerApp() {
         scheduledAt: safeDraft.scheduledAt || null,
         plannedFor: previous.plannedFor ?? (safeDraft.scheduledAt || null),
         missedAt: safeDraft.scheduledAt ? null : previous.missedAt,
-        reminderMinutes: safeDraft.dueAt ? safeDraft.reminderMinutes : null,
-        alarmMode: safeDraft.dueAt ? safeDraft.alarmMode : "none",
-        remindedFor: previous.dueAt === safeDraft.dueAt && previous.reminderMinutes === safeDraft.reminderMinutes ? previous.remindedFor : null,
-        status: safeDraft.scheduledAt ? "scheduled" : previous.status === "completed" ? "completed" : "backlog",
+        reminderMinutes: alarmMode === "none" ? null : 0,
+        alarmMode,
+        alarmModeLocked: previous.alarmModeLocked || Boolean(safeDraft.scheduledAt),
+        backlogAlarmTime,
+        backlogAlarmStartsAt: status === "backlog" && alarmMode !== "none"
+          ? (previous.backlogAlarmTime === backlogAlarmTime ? previous.backlogAlarmStartsAt : null) ?? nextDayAt(backlogAlarmTime)
+          : null,
+        snoozedUntil: null,
+        remindedFor: null,
+        status,
         updatedAt: new Date().toISOString(),
       };
       setState((current) => ({
@@ -480,7 +519,7 @@ export default function PlannerApp() {
   const scheduleAlarm = async (task: Task) => {
     try {
       if (!alarmsAvailable) return;
-      if (!task.dueAt || task.alarmMode === "none") { await cancelNativeTaskAlarm(task.id); return; }
+      if (task.status === "completed" || task.alarmMode === "none" || nextReminderOccurrence(task) === null) { await cancelNativeTaskAlarm(task.id); return; }
       if (isNativeApp()) {
         const permission = await prepareNativeAlarms(task.alarmMode === "strict");
         if (!permission.granted) { announce("Alarm permission is still off in Android settings."); return; }
@@ -495,17 +534,23 @@ export default function PlannerApp() {
   const toggleComplete = (task: Task) => {
     const completing = task.status !== "completed";
     const canReturnToSchedule = Boolean(task.scheduledAt && new Date(task.scheduledAt).getTime() + task.duration * 60_000 > Date.now());
+    const restoredStatus = canReturnToSchedule ? "scheduled" : "backlog";
+    const updated: Task = {
+      ...task,
+      status: completing ? "completed" : restoredStatus,
+      completedAt: completing ? new Date().toISOString() : null,
+      missedAt: completing ? task.missedAt : canReturnToSchedule ? null : (task.missedAt ?? new Date().toISOString()),
+      backlogAlarmStartsAt: completing || canReturnToSchedule || task.alarmMode === "none" ? null : nextDayAt(task.backlogAlarmTime ?? "09:00"),
+      snoozedUntil: null,
+      remindedFor: null,
+      updatedAt: new Date().toISOString(),
+    };
     setState((current) => ({
       ...current,
-      tasks: current.tasks.map((item) => item.id === task.id ? {
-        ...item,
-        status: completing ? "completed" : canReturnToSchedule ? "scheduled" : "backlog",
-        completedAt: completing ? new Date().toISOString() : null,
-        missedAt: completing ? item.missedAt : canReturnToSchedule ? null : (item.missedAt ?? new Date().toISOString()),
-        updatedAt: new Date().toISOString(),
-      } : item),
+      tasks: current.tasks.map((item) => item.id === task.id ? updated : item),
     }));
     if (completing) void cancelNativeTaskAlarm(task.id);
+    else void scheduleAlarm(updated);
     announce(completing ? "Nicely done." : "Task restored.");
   };
 
@@ -515,6 +560,17 @@ export default function PlannerApp() {
 
   const removeRoadmap = (roadmap: Roadmap) => {
     setDeleteTarget({ kind: "roadmap", roadmap });
+  };
+
+  const clearCompleted = () => {
+    if (!completed.length || !window.confirm(`Delete all ${completed.length} completed task${completed.length === 1 ? "" : "s"}? This cannot be undone.`)) return;
+    const completedIds = new Set(completed.map((task) => task.id));
+    setState((current) => {
+      const tasks = current.tasks.filter((task) => !completedIds.has(task.id));
+      const activeRoadmapIds = new Set(tasks.map((task) => task.goalId).filter(Boolean));
+      return { ...current, tasks, roadmaps: current.roadmaps.filter((roadmap) => activeRoadmapIds.has(roadmap.id)) };
+    });
+    announce(`Deleted ${completed.length} completed task${completed.length === 1 ? "" : "s"}.`);
   };
 
   const confirmDelete = () => {
@@ -557,20 +613,15 @@ export default function PlannerApp() {
       announce("Today is full. Auto-plan it into the next open day instead.");
       return;
     }
-    setState((current) => ({
-      ...current,
-      tasks: current.tasks.map((item) => item.id === task.id ? { ...item, status: "scheduled", scheduledAt: slot, plannedFor: item.plannedFor ?? slot, missedAt: null, updatedAt: new Date().toISOString() } : item),
-    }));
+    const updated: Task = { ...task, status: "scheduled", scheduledAt: slot, plannedFor: task.plannedFor ?? slot, backlogAlarmStartsAt: null, snoozedUntil: null, remindedFor: null, missedAt: null, updatedAt: new Date().toISOString() };
+    setState((current) => ({ ...current, tasks: current.tasks.map((item) => item.id === task.id ? updated : item) }));
+    void scheduleAlarm(updated);
     announce(`Scheduled for ${formatDateTime(slot)}.`);
   };
 
   const returnToBacklog = (task: Task) => {
-    setState((current) => ({
-      ...current,
-      tasks: current.tasks.map((item) => item.id === task.id ? { ...item, status: "backlog", plannedFor: item.plannedFor ?? item.scheduledAt, scheduledAt: item.goalId ? item.scheduledAt : null, updatedAt: new Date().toISOString() } : item),
-    }));
-    void cancelNativeTaskAlarm(task.id);
-    announce("Moved back to the backlog.");
+    if (task.alarmMode !== "none") { setBacklogAlarmTargetId(task.id); return; }
+    moveTaskToBacklog(task);
   };
 
   const quickAdd = (event: FormEvent) => {
@@ -580,6 +631,25 @@ export default function PlannerApp() {
     setState((current) => ({ ...current, tasks: [task, ...current.tasks] }));
     setQuickTitle("");
     announce("Captured. You can add details anytime.");
+  };
+
+  const createPlan = (title: string) => {
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    const now = new Date().toISOString();
+    const plan: Plan = { id: crypto.randomUUID(), title: trimmed, items: [], createdAt: now, updatedAt: now };
+    setState((current) => ({ ...current, plans: [plan, ...current.plans] }));
+    announce("Plan created.");
+  };
+
+  const updatePlan = (updated: Plan) => {
+    setState((current) => ({ ...current, plans: current.plans.map((plan) => plan.id === updated.id ? { ...updated, updatedAt: new Date().toISOString() } : plan) }));
+  };
+
+  const removePlan = (plan: Plan) => {
+    if (!window.confirm(`Delete “${plan.title}”?`)) return;
+    setState((current) => ({ ...current, plans: current.plans.filter((item) => item.id !== plan.id) }));
+    announce("Plan deleted.");
   };
 
   const enableNotifications = async () => {
@@ -640,14 +710,14 @@ export default function PlannerApp() {
 
   const snoozeStrictAlarm = () => {
     if (!activeAlarmId) return;
-    const snoozedUntil = new Date(Date.now() + 10 * 60_000).toISOString();
+    const snoozedUntil = new Date(Date.now() + 60 * 60_000).toISOString();
     const task = state.tasks.find((item) => item.id === activeAlarmId);
     if (!task) return;
     const updated = { ...task, snoozedUntil, remindedFor: null, updatedAt: new Date().toISOString() };
     setState((current) => ({ ...current, tasks: current.tasks.map((item) => item.id === activeAlarmId ? updated : item) }));
     void scheduleAlarm(updated);
     setActiveAlarmId(null);
-    announce("Strict alarm snoozed for 10 minutes.");
+    announce("Red alarm snoozed for one hour.");
   };
 
   const exportBackup = () => {
@@ -680,8 +750,8 @@ export default function PlannerApp() {
     announce("Your planner is clear.");
   };
 
-  const currentTitle = view === "dashboard" ? "A calm place to get things done." : view === "today" ? "Your day, clearly." : view === "schedule" ? "Your schedule." : view === "backlog" ? "Everything, captured." : "Progress worth seeing.";
-  const currentKicker = view === "dashboard" ? `${formatDayHeading(new Date())} · private and offline` : view === "today" ? "Today, without the noise" : view === "schedule" ? "Upcoming tasks and time blocks" : view === "backlog" ? `${backlog.length} task${backlog.length === 1 ? "" : "s"} waiting for a place` : `${completed.length} completed task${completed.length === 1 ? "" : "s"}`;
+  const currentTitle = view === "dashboard" ? "A calm place to get things done." : view === "today" ? "Your day, clearly." : view === "schedule" ? "Your schedule." : view === "backlog" ? "Everything, captured." : view === "plans" ? "Plans and checklists." : "Progress worth seeing.";
+  const currentKicker = view === "dashboard" ? `${formatDayHeading(new Date())} · private and offline` : view === "today" ? "Today, without the noise" : view === "schedule" ? "Upcoming tasks and time blocks" : view === "backlog" ? `${backlog.length} task${backlog.length === 1 ? "" : "s"} waiting for a place` : view === "plans" ? `${state.plans.length} no-alarm plan${state.plans.length === 1 ? "" : "s"}` : `${completed.length} completed task${completed.length === 1 ? "" : "s"}`;
 
   return (
     <MotionConfig reducedMotion="user">
@@ -696,7 +766,7 @@ export default function PlannerApp() {
           </button>
           <nav className="main-nav" aria-label="Planner views">
             {NAVIGATION.map(({ id, label, icon: Icon }) => {
-              const count = countForView(id, state.tasks);
+              const count = countForView(id, state.tasks, state.plans);
               return (
                 <motion.button key={id} whileTap={{ scale: 0.96 }} className={`nav-item ${view === id ? "active" : ""}`} onClick={() => openView(id)} aria-current={view === id ? "page" : undefined}>
                   <span><Icon size={18} /> <span className="nav-label">{label}</span></span>
@@ -800,8 +870,11 @@ export default function PlannerApp() {
                   onPlan={planBacklog}
                 />
               )}
+              {view === "plans" && (
+                <PlansView plans={state.plans} onCreate={createPlan} onUpdate={updatePlan} onDelete={removePlan} />
+              )}
               {view === "completed" && (
-                <CompletedView tasks={completed} onToggle={toggleComplete} onDelete={removeTask} />
+                <CompletedView tasks={completed} onToggle={toggleComplete} onDelete={removeTask} onClear={clearCompleted} />
               )}
             </motion.div>
           )}
@@ -840,10 +913,11 @@ export default function PlannerApp() {
       )}
       <InstallDialog open={installInfoOpen} installed={installed} native={native} alarmOnly={installForAlarm} onClose={() => { setInstallInfoOpen(false); setInstallForAlarm(false); }} onInstall={() => void installApp()} />
       {showOpening && <MotivationMoment mode="opening" onFinish={finishOpening} />}
-      {alarmsAvailable && activeAlarmMoment && <MotivationMoment mode="alarm" taskTitle={activeAlarmMoment.title} onFinish={stopAlarmMoment} onSnooze={snoozeAlarmMoment} onCheckIn={activeAlarmMoment.alarmMode === "strict" ? finishAlarmMoment : undefined} />}
+      {alarmsAvailable && activeAlarmMoment && <MotivationMoment mode="alarm" taskTitle={activeAlarmMoment.title} onFinish={stopAlarmMoment} onSnooze={snoozeAlarmMoment} onCheckIn={activeAlarmMoment.alarmMode === "strict" ? finishAlarmMoment : undefined} onBacklog={activeAlarmMoment.alarmMode === "strict" ? () => beginAlarmBacklogMove(activeAlarmMoment.id) : undefined} />}
       {alarmsAvailable && activeAlarmId && state.tasks.find((task) => task.id === activeAlarmId) && (
-        <StrictAlarmDialog task={state.tasks.find((task) => task.id === activeAlarmId)!} onComplete={completeStrictAlarm} onSnooze={snoozeStrictAlarm} />
+        <StrictAlarmDialog task={state.tasks.find((task) => task.id === activeAlarmId)!} onComplete={completeStrictAlarm} onSnooze={snoozeStrictAlarm} onBacklog={() => beginAlarmBacklogMove(activeAlarmId)} />
       )}
+      {backlogAlarmTarget && <BacklogAlarmDialog key={backlogAlarmTarget.id} task={backlogAlarmTarget} onCancel={() => setBacklogAlarmTargetId(null)} onMove={(time) => moveTaskToBacklog(backlogAlarmTarget, time)} />}
       <AlertDialog open={Boolean(deleteTarget)} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
         <AlertDialogContent className="border-white/12 bg-[#0a1526] text-white">
           <AlertDialogHeader>
@@ -1010,7 +1084,7 @@ function TaskCard({ task, compact = false, ...actions }: { task: Task; compact?:
       animate={{ opacity: 1, y: 0, scale: 1 }}
       whileHover={{ x: 2 }}
       transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-      className={`task-card due-${due} ${compact ? "compact" : ""} ${task.status === "completed" ? "is-complete" : ""}`}
+      className={`task-card due-${due} ${compact ? "compact" : ""} ${task.status === "completed" ? "is-complete" : ""} ${task.status === "backlog" && task.alarmMode === "strict" ? "is-red-backlog" : ""}`}
     >
       <button className="task-check" onClick={() => actions.onToggle(task)} aria-label={task.status === "completed" ? `Restore ${task.title}` : `Complete ${task.title}`}>
         {task.status === "completed" ? <Check size={14} /> : <Circle size={16} />}
@@ -1021,6 +1095,8 @@ function TaskCard({ task, compact = false, ...actions }: { task: Task; compact?:
           <span><Clock3 size={12} />{formatDuration(task.duration)}</span>
           {task.scheduledAt && task.status === "scheduled" && <span>{formatDateTime(task.scheduledAt)}</span>}
           {task.status === "backlog" && task.missedAt && (task.plannedFor ?? task.scheduledAt) && <span className="missed-label">Missed · {formatDateTime((task.plannedFor ?? task.scheduledAt)!)}</span>}
+          {task.status === "scheduled" && task.alarmMode !== "none" && <span className={task.alarmMode === "strict" ? "red-reminder-label" : "reminder-label"}><AlarmClock size={12} />Hourly after session</span>}
+          {task.status === "backlog" && task.backlogAlarmStartsAt && <span className={task.alarmMode === "strict" ? "red-reminder-label" : "reminder-label"}><AlarmClock size={12} />Retry from {formatDateTime(task.backlogAlarmStartsAt)}</span>}
           {task.goalId && task.sessionIndex && task.sessionCount && <span className="session-label">Session {task.sessionIndex}/{task.sessionCount}</span>}
           {task.dueAt && <span className={`due-label ${due}`}>{due === "overdue" ? "Overdue · " : due === "soon" ? "Due soon · " : "Due · "}{formatDateTime(task.dueAt)}</span>}
         </span>
@@ -1102,7 +1178,7 @@ function ScheduleView({ tasks, roadmaps, backlog, settings, onEdit, onToggle, on
   return (
     <div className="schedule-layout">
       <section className="roadmap-overview">
-        <div className="section-heading"><div><span className="eyebrow">Roadmaps</span><h2>{roadmaps.length ? `${roadmaps.length} active roadmap${roadmaps.length === 1 ? "" : "s"}` : "No roadmap yet"}</h2></div><span className="soft-pill"><MapIcon size={14} /> Long-term plans</span></div>
+          <div className="section-heading"><div><span className="eyebrow">Roadmaps</span><h2>{roadmaps.length ? `${roadmaps.length} active roadmap${roadmaps.length === 1 ? "" : "s"}` : "No roadmap yet"}</h2></div><span className="soft-pill"><Flame size={14} /> Independent streaks</span></div>
         {roadmaps.length ? <div className="roadmap-grid">{roadmaps.map((roadmap) => <RoadmapCard key={roadmap.id} roadmap={roadmap} tasks={tasks} onDelete={onDeleteRoadmap} />)}</div> : <EmptyState icon={MapIcon} title="Create a structured roadmap" body="Choose a date range, working days, session length, and the steps you want to schedule." />}
       </section>
       <section className="panel week-panel">
@@ -1160,10 +1236,52 @@ function BacklogView({ tasks, roadmaps, onAdd, onEdit, onToggle, onDelete, onTod
   );
 }
 
-function CompletedView({ tasks, onToggle, onDelete }: { tasks: Task[]; onToggle: (task: Task) => void; onDelete: (task: Task) => void }) {
+function PlansView({ plans, onCreate, onUpdate, onDelete }: { plans: Plan[]; onCreate: (title: string) => void; onUpdate: (plan: Plan) => void; onDelete: (plan: Plan) => void }) {
+  const [title, setTitle] = useState("");
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (!title.trim()) return;
+    onCreate(title);
+    setTitle("");
+  };
+  return (
+    <div className="plans-view">
+      <form className="plan-create panel" onSubmit={submit}>
+        <NotebookPen size={19} />
+        <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Create a plan or checklist…" aria-label="New plan title" maxLength={140} />
+        <button className="button button-primary" type="submit" disabled={!title.trim()}><Plus size={16} />Create</button>
+      </form>
+      <div className="plans-heading"><div><span className="eyebrow">Simple lists</span><h2>No schedules, alarms, or streak pressure</h2></div><span className="soft-pill"><LockKeyhole size={13} />Private on this device</span></div>
+      {plans.length ? <div className="plans-grid">{plans.map((plan) => <PlanCard key={plan.id} plan={plan} onUpdate={onUpdate} onDelete={onDelete} />)}</div> : <EmptyState icon={NotebookPen} title="Create your first plan" body="Use plans for shopping lists, ideas, packing lists, or anything that should never trigger an alarm." />}
+    </div>
+  );
+}
+
+function PlanCard({ plan, onUpdate, onDelete }: { plan: Plan; onUpdate: (plan: Plan) => void; onDelete: (plan: Plan) => void }) {
+  const [itemText, setItemText] = useState("");
+  const addItem = (event: FormEvent) => {
+    event.preventDefault();
+    const text = itemText.trim();
+    if (!text) return;
+    onUpdate({ ...plan, items: [...plan.items, { id: crypto.randomUUID(), text, completed: false }] });
+    setItemText("");
+  };
+  return (
+    <article className="plan-card">
+      <header><input className="plan-title-input" value={plan.title} onChange={(event) => onUpdate({ ...plan, title: event.target.value })} aria-label="Plan title" maxLength={140} /><button onClick={() => onDelete(plan)} aria-label={`Delete ${plan.title}`} title="Delete plan"><Trash2 size={15} /></button></header>
+      <div className="plan-items">
+        {plan.items.map((item) => <div className={`plan-item ${item.completed ? "is-complete" : ""}`} key={item.id}><button className="plan-item-check" onClick={() => onUpdate({ ...plan, items: plan.items.map((entry) => entry.id === item.id ? { ...entry, completed: !entry.completed } : entry) })} aria-pressed={item.completed} aria-label={`${item.completed ? "Restore" : "Complete"} ${item.text}`}>{item.completed ? <Check size={13} /> : <Circle size={14} />}</button><span>{item.text}</span><button className="plan-item-delete" onClick={() => onUpdate({ ...plan, items: plan.items.filter((entry) => entry.id !== item.id) })} aria-label={`Delete ${item.text}`}><X size={13} /></button></div>)}
+        {!plan.items.length && <p className="plan-empty">Add the first checklist item.</p>}
+      </div>
+      <form className="plan-add-item" onSubmit={addItem}><Plus size={14} /><input value={itemText} onChange={(event) => setItemText(event.target.value)} placeholder="List item" aria-label={`Add item to ${plan.title}`} maxLength={180} /></form>
+    </article>
+  );
+}
+
+function CompletedView({ tasks, onToggle, onDelete, onClear }: { tasks: Task[]; onToggle: (task: Task) => void; onDelete: (task: Task) => void; onClear: () => void }) {
   return (
     <section className="panel list-panel">
-      <div className="list-overview"><div><span className="eyebrow">Done and dusted</span><h2>{tasks.length ? `${tasks.length} completed` : "No completed tasks yet"}</h2><p>Your wins stay visible without cluttering the work ahead.</p></div></div>
+      <div className="list-overview"><div><span className="eyebrow">Completed</span><h2>{tasks.length ? `${tasks.length} completed` : "No completed tasks yet"}</h2><p>Restore individual tasks or permanently clear the completed list.</p></div>{tasks.length > 0 && <button className="danger-outline-button" onClick={onClear}><Trash2 size={15} />Delete completed</button>}</div>
       {tasks.length ? <div className="task-stack roomy">{tasks.map((task) => <TaskCard key={task.id} task={task} onToggle={onToggle} onDelete={onDelete} />)}</div> : <EmptyState icon={ListChecks} title="Your progress will collect here" body="Complete a task and it will move here automatically. You can restore it anytime." />}
     </section>
   );
@@ -1197,7 +1315,7 @@ function SettingsPanel({ settings, notificationPermission, installed, native, al
         <header className="modal-header"><div><span className="eyebrow">Your system</span><h2 id="settings-title">Settings</h2></div><button className="close-button" onClick={onClose} aria-label="Close settings"><X size={20} /></button></header>
         <div className="settings-body">
           <section className="settings-section"><div className="settings-heading"><span className="settings-icon"><CalendarDays size={18} /></span><div><h3>Auto-schedule window</h3><p>Tasks use real open slots inside these working days and hours.</p></div></div><div className="weekday-picker">{WEEKDAYS.map((day, index) => <button key={`${day.value}-${index}`} className={settings.workDays.includes(day.value) ? "active" : ""} onClick={() => toggleWorkDay(day.value)} aria-label={`Toggle ${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][day.value]}`}>{day.label}</button>)}</div><div className="form-grid three compact-grid"><label className="field"><span>Start</span><input type="time" value={settings.dayStart} onChange={(event) => onChange({ ...settings, dayStart: event.target.value })} /></label><label className="field"><span>Finish</span><input type="time" value={settings.dayEnd} onChange={(event) => onChange({ ...settings, dayEnd: event.target.value })} /></label><label className="field"><span>Plan ahead</span><select value={settings.planningDays} onChange={(event) => onChange({ ...settings, planningDays: Number(event.target.value) })}><option value={5}>5 workdays</option><option value={7}>7 workdays</option><option value={10}>10 workdays</option><option value={14}>14 workdays</option></select></label></div></section>
-          <section className="settings-section"><div className="settings-heading"><span className="settings-icon"><BellRing size={18} /></span><div><h3>Reminders</h3><p>{alarmsAvailable ? "Local alarms with no account or server." : "Unavailable in a regular browser."}</p></div></div>{alarmsAvailable ? <><div className="settings-row"><div><strong>{native ? "Android alarm system" : notificationPermission === "granted" ? "Notifications enabled" : "Notifications are off"}</strong><span>{native ? "Can notify outside the app after Android permissions are granted." : notificationPermission === "granted" ? "Due reminders can appear while the app is active." : "Allow notifications to receive due reminders."}</span></div>{(native || notificationPermission !== "granted") && <button className="button button-quiet" onClick={onEnableNotifications}><Bell size={15} /> {native ? "Configure" : "Enable"}</button>}</div><label className="toggle-row"><div><strong>Reminder sound</strong><span>Play a tone when an in-app reminder fires.</span></div><input type="checkbox" checked={settings.sound} onChange={(event) => onChange({ ...settings, sound: event.target.checked })} /><i /></label><div className="honest-note"><CloudOff size={17} /><p><strong>{native ? "Android path:" : "Installed app:"}</strong> {native ? "Persistent exact local notifications work after the app is killed when Notifications and Alarms & reminders are allowed." : "Keep the installed app available so due reminders can appear with Stop and Snooze controls."}</p></div></> : <button className="alarm-settings-lock" onClick={onAlarmUnavailable}><LockKeyhole size={18} /><span><strong>Install DamnTodo for alarms</strong><small>Browser alarms are blocked because they cannot be trusted.</small></span><ChevronRight size={16} /></button>}</section>
+          <section className="settings-section"><div className="settings-heading"><span className="settings-icon"><BellRing size={18} /></span><div><h3>Hourly follow-ups</h3><p>{alarmsAvailable ? "Quiet during sessions, persistent after they end." : "Unavailable in a regular browser."}</p></div></div>{alarmsAvailable ? <><div className="settings-row"><div><strong>{native ? "Android alarm system" : notificationPermission === "granted" ? "Notifications enabled" : "Notifications are off"}</strong><span>{native ? "Can continue the hourly retry cycle outside the app after Android permissions are granted." : notificationPermission === "granted" ? "Hourly follow-ups can appear while the installed app is available." : "Allow notifications to receive hourly follow-ups."}</span></div>{(native || notificationPermission !== "granted") && <button className="button button-quiet" onClick={onEnableNotifications}><Bell size={15} /> {native ? "Configure" : "Enable"}</button>}</div><label className="toggle-row"><div><strong>Reminder sound</strong><span>Gentle stays silent; red mode plays a tone with its hourly alarm.</span></div><input type="checkbox" checked={settings.sound} onChange={(event) => onChange({ ...settings, sound: event.target.checked })} /><i /></label><div className="honest-note"><CloudOff size={17} /><p><strong>{native ? "Android path:" : "Installed app:"}</strong> {native ? "A rolling exact-notification queue is refreshed whenever the app opens. Grant Notifications and Alarms & reminders for killed-app delivery." : "Keep the installed app available so hourly follow-ups can appear with Stop, Snooze, and Backlog controls."}</p></div></> : <button className="alarm-settings-lock" onClick={onAlarmUnavailable}><LockKeyhole size={18} /><span><strong>Install DamnTodo for alarms</strong><small>Browser alarms are blocked because they cannot be trusted.</small></span><ChevronRight size={16} /></button>}</section>
           <section className="settings-section"><div className="settings-heading"><span className="settings-icon"><Install size={18} /></span><div><h3>App &amp; data</h3><p>Your tasks live only in this browser&apos;s private offline database.</p></div></div><div className="action-grid"><button className="settings-action" onClick={onInstall}><Install size={18} /><span><strong>{installed ? "App installed" : "Install DamnTodo"}</strong><small>{installed ? "Ready from your home screen" : "Use it like a native app"}</small></span><ChevronRight size={16} /></button><button className="settings-action" onClick={onExport}><Download size={18} /><span><strong>Download backup</strong><small>Save every task and setting</small></span><ChevronRight size={16} /></button><button className="settings-action" onClick={() => fileRef.current?.click()}><FileUp size={18} /><span><strong>Restore backup</strong><small>Import a DamnTodo JSON file</small></span><ChevronRight size={16} /></button></div><input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void onImport(file); event.target.value = ""; }} /><button className="danger-button" onClick={onClear}><Trash2 size={15} /> Clear every task</button></section>
         </div>
         <footer className="modal-footer"><span className="privacy-note"><span className="status-dot" /> No account · No cloud · No tracking</span><button className="button button-primary" onClick={onClose}>Done</button></footer>

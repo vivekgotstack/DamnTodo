@@ -2,22 +2,24 @@
 
 import Image from "next/image";
 import { useEffect, useState } from "react";
-import { AlarmClock, BellRing, CheckCircle2, Download, LockKeyhole, Smartphone } from "lucide-react";
+import { AlarmClock, ArchiveRestore, BellRing, CheckCircle2, Download, LockKeyhole, Smartphone } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { ShimmerButton } from "@/components/ui/shimmer-button";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDuration, type Task } from "@/lib/planner";
 
-export function MotivationMoment({ mode, taskTitle, onFinish, onSnooze, onCheckIn }: {
+export function MotivationMoment({ mode, taskTitle, onFinish, onSnooze, onCheckIn, onBacklog }: {
   mode: "opening" | "alarm";
   taskTitle?: string;
   onFinish: () => void;
   onSnooze?: () => void;
   onCheckIn?: () => void;
+  onBacklog?: () => void;
 }) {
   const opening = mode === "opening";
 
@@ -50,9 +52,10 @@ export function MotivationMoment({ mode, taskTitle, onFinish, onSnooze, onCheckI
           <span>One chance. Make it count.</span>
           <h2>{taskTitle}</h2>
           <div className="motivation-controls">
-            {onSnooze && <Button variant="outline" onClick={onSnooze} className="h-12 border-white/35 bg-slate-950/45 px-5 text-white backdrop-blur-sm hover:bg-slate-900/70 hover:text-white">Snooze 10 min</Button>}
+            {onSnooze && <Button variant="outline" onClick={onSnooze} className="h-12 border-white/35 bg-slate-950/45 px-5 text-white backdrop-blur-sm hover:bg-slate-900/70 hover:text-white">Snooze 1 hour</Button>}
             <Button onClick={onFinish} className="h-12 bg-white px-6 text-slate-950 shadow-2xl hover:bg-sky-50">Stop alarm</Button>
             {onCheckIn && <Button variant="ghost" onClick={onCheckIn} className="h-12 bg-rose-300/15 px-5 text-rose-50 hover:bg-rose-300/25 hover:text-white">Check in</Button>}
+            {onBacklog && <Button variant="ghost" onClick={onBacklog} className="h-12 bg-amber-300/15 px-5 text-amber-50 hover:bg-amber-300/25 hover:text-white"><ArchiveRestore className="size-4" />Move to backlog</Button>}
           </div>
         </div>
       )}
@@ -98,10 +101,37 @@ export function InstallDialog({ open, installed, native, alarmOnly = false, onCl
   );
 }
 
-export function StrictAlarmDialog({ task, onComplete, onSnooze }: {
+export function BacklogAlarmDialog({ task, onCancel, onMove }: {
+  task: Task;
+  onCancel: () => void;
+  onMove: (time: string) => void;
+}) {
+  const [time, setTime] = useState(task.backlogAlarmTime ?? "09:00");
+  const strict = task.alarmMode === "strict";
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onCancel(); }}>
+      <DialogContent className="border-amber-200/15 bg-[#111522]/98 text-white sm:max-w-[500px]">
+        <DialogHeader className="text-left">
+          <Badge className="mb-2 w-fit bg-amber-300/12 text-amber-100"><ArchiveRestore className="mr-1 size-3" />Honest recovery</Badge>
+          <DialogTitle>Move “{task.title}” to tomorrow&apos;s backlog?</DialogTitle>
+          <DialogDescription className="text-slate-400">{strict ? "It stays in red mode and becomes high priority. Starting tomorrow, the alarm returns every hour from the time you choose." : "It keeps its gentle mode. Starting tomorrow, a gentle message returns every hour from the time you choose."}</DialogDescription>
+        </DialogHeader>
+        <label className="grid gap-2 text-xs text-slate-300" htmlFor="backlog-retry-time">First hourly alarm<Input id="backlog-retry-time" type="time" value={time} onChange={(event) => setTime(event.target.value)} className="h-12 border-white/12 bg-black/20 text-white [color-scheme:dark]" /></label>
+        <p className="text-xs text-amber-100/60">Default: 09:00. Completing or rescheduling the task stops this backlog cycle.</p>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onCancel} className="text-slate-400 hover:bg-white/5 hover:text-white">Keep current schedule</Button>
+          <Button onClick={() => onMove(time || "09:00")} className="bg-amber-200 text-amber-950 hover:bg-amber-100">Move to backlog</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+export function StrictAlarmDialog({ task, onComplete, onSnooze, onBacklog }: {
   task: Task;
   onComplete: (note: string) => void;
   onSnooze: () => void;
+  onBacklog: () => void;
 }) {
   const [checkingIn, setCheckingIn] = useState(false);
   const [note, setNote] = useState("");
@@ -138,7 +168,8 @@ export function StrictAlarmDialog({ task, onComplete, onSnooze }: {
           )}
         </div>
         <DialogFooter className="relative mx-0 mb-0 border-t border-white/10 bg-black/10 px-6 py-4 sm:px-8">
-          <Button variant="ghost" onClick={onSnooze} className="text-rose-50/60 hover:bg-white/5 hover:text-white">I need 10 more minutes</Button>
+          <Button variant="ghost" onClick={onBacklog} className="mr-auto text-amber-100/70 hover:bg-amber-200/10 hover:text-amber-50"><ArchiveRestore className="size-4" />Move to backlog</Button>
+          <Button variant="ghost" onClick={onSnooze} className="text-rose-50/60 hover:bg-white/5 hover:text-white">Snooze 1 hour</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

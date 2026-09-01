@@ -1,8 +1,8 @@
 import { Capacitor } from "@capacitor/core";
-import type { Task } from "./planner";
+import { nextReminderOccurrence, type Task } from "./planner";
 
 const CHANNEL_ID = "damntodo-strict";
-const FOLLOW_UPS = 6;
+const FOLLOW_UPS = 24;
 
 function hash(value: string) {
   let result = 2166136261;
@@ -48,22 +48,20 @@ export async function prepareNativeAlarms(requestExact = false) {
 }
 
 export async function scheduleNativeTaskAlarm(task: Task) {
-  if (!isNativeApp() || !task.dueAt || task.alarmMode === "none" || task.reminderMinutes === null) return;
+  if (!isNativeApp() || task.status === "completed" || task.alarmMode === "none") return;
   const { LocalNotifications } = await import("@capacitor/local-notifications");
   await cancelNativeTaskAlarm(task.id);
-  const alarmAt = task.goalId && task.scheduledAt ? task.scheduledAt : task.dueAt;
-  const trigger = task.snoozedUntil ? new Date(task.snoozedUntil).getTime() : new Date(alarmAt).getTime() - task.reminderMinutes * 60_000;
-  if (trigger <= Date.now()) return;
+  const trigger = nextReminderOccurrence(task);
+  if (trigger === null) return;
   const strict = task.alarmMode === "strict";
-  const count = strict ? FOLLOW_UPS : 1;
   await LocalNotifications.schedule({
-    notifications: Array.from({ length: count }, (_, index) => ({
+    notifications: Array.from({ length: FOLLOW_UPS }, (_, index) => ({
       id: notificationIds(task.id)[index],
-      title: strict ? "DamnTodo strict alarm" : "DamnTodo reminder",
-      body: strict ? `${task.title}. Open the app and check in when it is actually done.` : task.title,
-      largeBody: strict ? `This alarm stays active until you open DamnTodo and complete: ${task.title}` : undefined,
+      title: strict ? "DamnTodo red alarm" : "DamnTodo hourly reminder",
+      body: strict ? `${task.title} is still unfinished. Complete it or move it honestly to tomorrow's backlog.` : `${task.title} is still unfinished. This reminder returns each hour.`,
+      largeBody: strict ? `Open DamnTodo to complete ${task.title}, snooze one hour, or move it to a high-priority backlog retry.` : undefined,
       channelId: CHANNEL_ID,
-      schedule: { at: new Date(trigger + index * 10 * 60_000), allowWhileIdle: true },
+      schedule: { at: new Date(trigger + index * 60 * 60_000), allowWhileIdle: true },
       ongoing: strict,
       autoCancel: !strict,
       isExactNotification: true,

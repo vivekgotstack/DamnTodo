@@ -37,7 +37,10 @@ export interface Task {
   reminderMinutes: number | null;
   remindedFor: string | null;
   alarmMode?: AlarmMode;
+  alarmModeLocked?: boolean;
   snoozedUntil?: string | null;
+  backlogAlarmTime?: string;
+  backlogAlarmStartsAt?: string | null;
   goalId?: string | null;
   sessionIndex?: number | null;
   sessionCount?: number | null;
@@ -47,6 +50,20 @@ export interface Task {
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
+}
+
+export interface PlanItem {
+  id: string;
+  text: string;
+  completed: boolean;
+}
+
+export interface Plan {
+  id: string;
+  title: string;
+  items: PlanItem[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface PlannerSettings {
@@ -61,8 +78,9 @@ export interface PlannerSettings {
 export interface PlannerState {
   tasks: Task[];
   roadmaps: Roadmap[];
+  plans: Plan[];
   settings: PlannerSettings;
-  version: 3;
+  version: 4;
 }
 
 export const DEFAULT_SETTINGS: PlannerSettings = {
@@ -77,8 +95,9 @@ export const DEFAULT_SETTINGS: PlannerSettings = {
 export const DEFAULT_STATE: PlannerState = {
   tasks: [],
   roadmaps: [],
+  plans: [],
   settings: DEFAULT_SETTINGS,
-  version: 3,
+  version: 4,
 };
 
 export interface TaskDraft {
@@ -91,6 +110,7 @@ export interface TaskDraft {
   scheduledAt: string;
   reminderMinutes: number | null;
   alarmMode: AlarmMode;
+  backlogAlarmTime: string;
   availableFrom: string;
   totalDuration: number;
   maxSessionDuration: number;
@@ -113,6 +133,7 @@ export const emptyDraft = (duration = 30): TaskDraft => ({
   scheduledAt: "",
   reminderMinutes: 30,
   alarmMode: "gentle",
+  backlogAlarmTime: "09:00",
   availableFrom: toLocalInput(new Date()).slice(0, 10),
   totalDuration: 300,
   maxSessionDuration: 60,
@@ -127,6 +148,7 @@ export const emptyDraft = (duration = 30): TaskDraft => ({
 
 export function createTask(draft: TaskDraft): Task {
   const now = new Date().toISOString();
+  const alarmMode = draft.scheduledAt ? draft.alarmMode : "none";
   return {
     id: crypto.randomUUID(),
     title: draft.title.trim(),
@@ -136,10 +158,13 @@ export function createTask(draft: TaskDraft): Task {
     duration: draft.duration,
     dueAt: draft.dueAt || null,
     scheduledAt: draft.scheduledAt || null,
-    reminderMinutes: draft.dueAt ? draft.reminderMinutes : null,
+    reminderMinutes: alarmMode === "none" ? null : 0,
     remindedFor: null,
-    alarmMode: draft.dueAt ? draft.alarmMode : "none",
+    alarmMode,
+    alarmModeLocked: Boolean(draft.scheduledAt),
     snoozedUntil: null,
+    backlogAlarmTime: draft.backlogAlarmTime || "09:00",
+    backlogAlarmStartsAt: null,
     goalId: null,
     sessionIndex: null,
     sessionCount: null,
@@ -163,6 +188,7 @@ export function draftFromTask(task: Task): TaskDraft {
     scheduledAt: task.scheduledAt ?? "",
     reminderMinutes: task.reminderMinutes,
     alarmMode: task.alarmMode ?? (task.reminderMinutes === null ? "none" : "gentle"),
+    backlogAlarmTime: task.backlogAlarmTime ?? "09:00",
     availableFrom: (task.scheduledAt ?? task.createdAt).slice(0, 10),
     totalDuration: task.totalGoalMinutes ?? task.duration,
     maxSessionDuration: task.duration,
@@ -284,10 +310,13 @@ export function createRoadmap(draft: TaskDraft) {
       duration: draft.duration,
       dueAt: `${endDate}T23:59`,
       scheduledAt,
-      reminderMinutes: draft.alarmMode === "none" ? null : draft.reminderMinutes,
+      reminderMinutes: draft.alarmMode === "none" ? null : 0,
       remindedFor: null,
       alarmMode: draft.alarmMode,
+      alarmModeLocked: true,
       snoozedUntil: null,
+      backlogAlarmTime: draft.backlogAlarmTime || "09:00",
+      backlogAlarmStartsAt: null,
       goalId: roadmapId,
       sessionIndex: index + 1,
       sessionCount,
@@ -315,7 +344,7 @@ export function createRoadmap(draft: TaskDraft) {
     randomStart: draft.randomStart,
     randomEnd: draft.randomEnd,
     alarmMode: draft.alarmMode,
-    reminderMinutes: draft.alarmMode === "none" ? null : draft.reminderMinutes,
+    reminderMinutes: draft.alarmMode === "none" ? null : 0,
     createdAt: now,
     updatedAt: now,
   };
@@ -327,17 +356,40 @@ export function rollOverMissedTasks(tasks: Task[], now = new Date()) {
   const next = tasks.map((task) => {
     if (task.status !== "scheduled" || !task.scheduledAt) return task;
     const sessionEnd = new Date(task.scheduledAt).getTime() + task.duration * 60_000;
-    if (sessionEnd > now.getTime()) return task;
+    if (sessionEnd > now.getTime() || task.missedAt) return task;
     moved += 1;
     return {
       ...task,
-      status: "backlog" as const,
       plannedFor: task.plannedFor ?? task.scheduledAt,
       missedAt: now.toISOString(),
       updatedAt: now.toISOString(),
     };
   });
   return { tasks: next, moved };
+}
+
+const HOURLY_REMINDER_MS = 60 * 60 * 1000;
+
+export function taskReminderStart(task: Task) {
+  if (task.status === "completed" || task.alarmMode === "none") return null;
+  if (task.snoozedUntil) return new Date(task.snoozedUntil).getTime();
+  if (task.status === "backlog") return task.backlogAlarmStartsAt ? new Date(task.backlogAlarmStartsAt).getTime() : null;
+  if (!task.scheduledAt) return null;
+  return new Date(task.scheduledAt).getTime() + task.duration * 60_000;
+}
+
+export function currentReminderOccurrence(task: Task, now = Date.now()) {
+  const startsAt = taskReminderStart(task);
+  if (startsAt === null || Number.isNaN(startsAt) || startsAt > now) return null;
+  const occurrence = startsAt + Math.floor((now - startsAt) / HOURLY_REMINDER_MS) * HOURLY_REMINDER_MS;
+  return { triggerAt: occurrence, key: `hourly:${occurrence}` };
+}
+
+export function nextReminderOccurrence(task: Task, now = Date.now()) {
+  const startsAt = taskReminderStart(task);
+  if (startsAt === null || Number.isNaN(startsAt)) return null;
+  if (startsAt > now) return startsAt;
+  return startsAt + (Math.floor((now - startsAt) / HOURLY_REMINDER_MS) + 1) * HOURLY_REMINDER_MS;
 }
 
 export interface RoadmapStats {
@@ -497,6 +549,9 @@ export function autoSchedule(tasks: Task[], settings: PlannerSettings) {
       status: "scheduled",
       scheduledAt: toLocalInput(chosen.slot),
       plannedFor: task.plannedFor ?? toLocalInput(chosen.slot),
+      backlogAlarmStartsAt: null,
+      snoozedUntil: null,
+      remindedFor: null,
       missedAt: null,
       updatedAt: new Date().toISOString(),
     });
@@ -519,8 +574,12 @@ export function isSameDay(value: string | null, date = new Date()) {
 }
 
 export function dueState(task: Task): "overdue" | "soon" | "later" | "none" {
-  if (!task.dueAt || task.status === "completed") return "none";
-  const diff = new Date(task.dueAt).getTime() - Date.now();
+  if (task.status === "completed") return "none";
+  const target = task.status === "scheduled" && task.scheduledAt
+    ? new Date(task.scheduledAt).getTime() + task.duration * 60_000
+    : task.dueAt ? new Date(task.dueAt).getTime() : null;
+  if (target === null) return "none";
+  const diff = target - Date.now();
   if (diff < 0) return "overdue";
   if (diff <= 24 * 60 * 60 * 1000) return "soon";
   return "later";
