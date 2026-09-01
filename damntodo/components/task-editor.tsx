@@ -155,7 +155,7 @@ export function TaskEditor({ task, initialScheduledAt, defaultDuration, onClose,
 
           <DialogFooter className="mx-0 mb-0 border-t border-white/10 bg-black/10 px-5 py-4 sm:px-7">
             <Button type="button" variant="ghost" onClick={onClose} className="text-slate-300 hover:bg-white/7 hover:text-white">Cancel</Button>
-            <Button type="submit" className="h-11 bg-sky-200 px-5 text-slate-950 shadow-lg shadow-sky-500/10 hover:bg-sky-100">
+            <Button type="submit" className="editor-submit h-11 bg-sky-200 px-5 shadow-lg shadow-sky-500/10 hover:bg-sky-100">
               {task ? "Save changes" : draft.kind === "goal" ? `Build ${sessions || "the"} sessions` : draft.scheduledAt ? "Add to schedule" : "Add to backlog"}<ChevronRight className="size-4" />
             </Button>
           </DialogFooter>

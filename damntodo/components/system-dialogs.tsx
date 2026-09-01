@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useState } from "react";
 import { AlarmClock, BellRing, CheckCircle2, Download, LockKeyhole, Smartphone } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -16,12 +17,11 @@ export function MotivationMoment({ mode, taskTitle, onFinish }: {
   taskTitle?: string;
   onFinish: () => void;
 }) {
-  const [videoReady, setVideoReady] = useState(false);
   const opening = mode === "opening";
 
   useEffect(() => {
     if (!opening) return;
-    const fallback = window.setTimeout(onFinish, 7500);
+    const fallback = window.setTimeout(onFinish, 2700);
     return () => window.clearTimeout(fallback);
   }, [onFinish, opening]);
 
@@ -32,20 +32,16 @@ export function MotivationMoment({ mode, taskTitle, onFinish }: {
       aria-modal={opening ? undefined : true}
       aria-label={opening ? "Opening DamnTodo" : `Alarm for ${taskTitle ?? "your task"}`}
     >
-      <video
-        className={`motivation-video ${videoReady ? "is-ready" : ""}`}
-        autoPlay
-        muted
-        playsInline
-        loop={!opening}
-        preload="auto"
-        aria-label={opening ? "Opening motivation video" : `Motivation video for ${taskTitle ?? "your alarm"}`}
-        onCanPlay={() => setVideoReady(true)}
-        onEnded={opening ? onFinish : undefined}
+      <Image
+        className="motivation-gif"
+        src="/motivation-strange.gif"
+        alt={opening ? "Opening motivation moment" : `Motivation moment for ${taskTitle ?? "your alarm"}`}
+        fill
+        unoptimized
+        priority={opening}
+        sizes="100vw"
         onError={opening ? onFinish : undefined}
-      >
-        <source src="/motivation-sky.mp4" type="video/mp4" />
-      </video>
+      />
       <div className="motivation-vignette" />
       {!opening && (
         <div className="motivation-callout">
