@@ -317,7 +317,7 @@ input[type="date"], input[type="time"], input[type="datetime-local"] { color-sch
 
 .motivation-moment { position: fixed; inset: 0; z-index: 320; overflow: hidden; isolation: isolate; background: #071425; }
 .motivation-moment.is-opening { z-index: 500; }
-.motivation-poster, .motivation-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 44%; }
+.motivation-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 44%; }
 .motivation-video { z-index: 1; opacity: 0; transition: opacity .25s ease; }
 .motivation-video.is-ready { opacity: 1; }
 .motivation-vignette { position: absolute; inset: 0; z-index: 2; pointer-events: none; background: linear-gradient(180deg, rgba(2, 9, 20, .08) 20%, rgba(2, 8, 17, .34) 64%, rgba(2, 7, 15, .9)), radial-gradient(circle at center, transparent 34%, rgba(2, 7, 16, .24) 100%); }
@@ -325,6 +325,8 @@ input[type="date"], input[type="time"], input[type="datetime-local"] { color-sch
 .motivation-callout { position: absolute; right: 0; bottom: max(36px, env(safe-area-inset-bottom)); left: 0; z-index: 3; display: grid; justify-items: center; gap: 10px; padding: 28px 20px; text-align: center; }
 .motivation-callout > span { color: #d9edff; font-size: 11px; font-weight: 720; letter-spacing: .18em; text-transform: uppercase; text-shadow: 0 2px 16px rgba(0, 0, 0, .75); }
 .motivation-callout h2 { max-width: 760px; margin: 0 0 7px; color: #fff; font-size: clamp(26px, 5vw, 54px); font-weight: 720; line-height: 1.02; letter-spacing: -.045em; text-wrap: balance; text-shadow: 0 6px 30px rgba(0, 0, 0, .76); }
+.motivation-sound { position: absolute; top: max(18px, env(safe-area-inset-top)); right: max(18px, env(safe-area-inset-right)); z-index: 4; display: inline-flex; align-items: center; gap: 7px; min-height: 38px; padding: 0 12px; border: 1px solid rgba(255, 255, 255, .28); border-radius: 999px; cursor: pointer; color: #fff; background: rgba(3, 10, 21, .52); box-shadow: 0 8px 30px rgba(0, 0, 0, .24); backdrop-filter: blur(14px); font-size: 11px; font-weight: 680; }
+.motivation-sound:hover { background: rgba(8, 19, 34, .72); }
 
 .button:active, .icon-button:active, .close-button:active, .side-action:active, .back-button:active { transform: translateY(0) scale(.97); }
 .task-check:active, .task-actions button:active, .add-slot:active { transform: scale(.9); }
@@ -686,12 +688,11 @@ input[type="date"], input[type="time"], input[type="datetime-local"] { color-sch
   .roadmap-next { align-items: flex-start; flex-direction: column; gap: 5px; }
   .horizon-presets { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .roadmap-horizon, .goal-builder, .alarm-builder { padding: 15px; }
-  .motivation-poster, .motivation-video { object-position: 47% center; }
+  .motivation-video { object-position: 47% center; }
   .motivation-callout { bottom: max(22px, env(safe-area-inset-bottom)); padding-inline: 17px; }
   .motivation-callout h2 { font-size: clamp(25px, 9vw, 40px); }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .roadmap-card, .roadmap-card::after, .red-mode-badge, .streak-chip svg, .editor-error { animation: none !important; }
-  .motivation-video { display: none; }
 }
