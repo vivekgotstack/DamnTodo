@@ -3,6 +3,8 @@
 import Image from "next/image";
 import {
   AlarmClock,
+  ArrowLeft,
+  ArrowUpRight,
   AppWindow as Install,
   Archive,
   Bell,
@@ -16,6 +18,8 @@ import {
   CloudOff,
   Download,
   FileUp,
+  Flame,
+  Home,
   Inbox,
   ListChecks,
   Pencil,
@@ -23,6 +27,8 @@ import {
   RotateCcw,
   Settings,
   Sparkles,
+  Target,
+  TrendingUp,
   Trash2,
   X,
 } from "lucide-react";
@@ -32,6 +38,9 @@ import logoMark from "@/public/logo-mark.png";
 import { TaskEditor } from "@/components/task-editor";
 import { InstallDialog, StrictAlarmDialog } from "@/components/system-dialogs";
 import { ShimmerButton } from "@/components/ui/shimmer-button";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
 import {
   DEFAULT_STATE,
   autoSchedule,
@@ -52,7 +61,7 @@ import {
 import { loadState, saveState } from "@/lib/storage";
 import { cancelNativeTaskAlarm, isNativeApp, listenForNativeAlarm, prepareNativeAlarms, scheduleNativeTaskAlarm } from "@/lib/native-alarms";
 
-type View = "today" | "schedule" | "backlog" | "completed";
+type View = "dashboard" | "today" | "schedule" | "backlog" | "completed";
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -60,6 +69,7 @@ interface BeforeInstallPromptEvent extends Event {
 }
 
 const NAVIGATION: Array<{ id: View; label: string; icon: typeof CalendarDays }> = [
+  { id: "dashboard", label: "Home", icon: Home },
   { id: "today", label: "Today", icon: CalendarDays },
   { id: "schedule", label: "Schedule", icon: Archive },
   { id: "backlog", label: "Backlog", icon: Inbox },
@@ -94,10 +104,14 @@ function countForView(view: View, tasks: Task[]) {
   return 0;
 }
 
+const VIEW_KEY = "damntodo:active-view";
+const isView = (value: string | null): value is View =>
+  value === "dashboard" || value === "today" || value === "schedule" || value === "backlog" || value === "completed";
+
 export default function PlannerApp() {
   const [state, setState] = useState<PlannerState>(DEFAULT_STATE);
   const [ready, setReady] = useState(false);
-  const [view, setView] = useState<View>("today");
+  const [view, setView] = useState<View>("dashboard");
   const [editor, setEditor] = useState<{ task: Task | null; scheduledAt?: string } | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -120,11 +134,34 @@ export default function PlannerApp() {
     let active = true;
     loadState().then((saved) => {
       if (!active) return;
+      const hashView = window.location.hash.replace("#", "");
+      const restoredView = isView(hashView) ? hashView : localStorage.getItem(VIEW_KEY);
+      if (isView(restoredView)) setView(restoredView);
       setState(saved);
       setReady(true);
     });
     return () => { active = false; };
   }, []);
+
+  useEffect(() => {
+    const restoreFromHistory = () => {
+      const hashView = window.location.hash.replace("#", "");
+      const restoredView = isView(hashView) ? hashView : "dashboard";
+      setView(restoredView);
+      localStorage.setItem(VIEW_KEY, restoredView);
+    };
+    window.addEventListener("popstate", restoreFromHistory);
+    return () => window.removeEventListener("popstate", restoreFromHistory);
+  }, []);
+
+  const openView = useCallback((nextView: View, replace = false) => {
+    if (nextView === view && !replace) return;
+    setView(nextView);
+    localStorage.setItem(VIEW_KEY, nextView);
+    const nextUrl = `${window.location.pathname}${window.location.search}#${nextView}`;
+    if (replace) window.history.replaceState({ damnTodoView: nextView }, "", nextUrl);
+    else window.history.pushState({ damnTodoView: nextView }, "", nextUrl);
+  }, [view]);
 
   useEffect(() => {
     if (!ready) return;
@@ -238,6 +275,9 @@ export default function PlannerApp() {
   const overdue = useMemo(() => state.tasks.filter((task) => dueState(task) === "overdue"), [state.tasks]);
   const todayMinutes = todayTasks.reduce((total, task) => total + task.duration, 0);
   const focusTask = todayTasks[0] ?? overdue[0] ?? null;
+  const activeTasks = state.tasks.filter((task) => task.status !== "completed");
+  const scheduledTasks = activeTasks.filter((task) => task.status === "scheduled");
+  const completionRate = state.tasks.length ? Math.round((completed.length / state.tasks.length) * 100) : 0;
 
   const saveTask = async (draft: TaskDraft) => {
     if (editor?.task) {
@@ -267,7 +307,7 @@ export default function PlannerApp() {
       if (result.error) { announce(result.error); return; }
       setState((current) => ({ ...current, tasks: [...result.tasks, ...current.tasks] }));
       await Promise.all(result.tasks.map(scheduleAlarm));
-      setView("schedule");
+      openView("schedule");
       announce(result.overflow
         ? `Created ${result.tasks.length} sessions. ${result.overflow} need more working hours.`
         : `Distributed exactly ${formatDuration(draft.totalDuration)} into ${result.tasks.length} balanced sessions.`);
@@ -323,7 +363,7 @@ export default function PlannerApp() {
       return;
     }
     setState((current) => ({ ...current, tasks: result.tasks }));
-    setView("schedule");
+    openView("schedule");
     announce(result.overflow ? `Planned ${result.scheduled} tasks. ${result.overflow} still need more room.` : `Evenly planned ${result.scheduled} task${result.scheduled === 1 ? "" : "s"}.`);
   };
 
@@ -444,8 +484,8 @@ export default function PlannerApp() {
     announce("Your planner is clear.");
   };
 
-  const currentTitle = view === "today" ? "Your day, clearly." : view === "schedule" ? "A week that fits." : view === "backlog" ? "Everything, captured." : "Progress worth seeing.";
-  const currentKicker = view === "today" ? formatDayHeading(new Date()) : view === "schedule" ? "Balanced automatically, editable always" : view === "backlog" ? `${backlog.length} task${backlog.length === 1 ? "" : "s"} waiting for a place` : `${completed.length} completed task${completed.length === 1 ? "" : "s"}`;
+  const currentTitle = view === "dashboard" ? "A calm place to get things done." : view === "today" ? "Your day, clearly." : view === "schedule" ? "A plan that actually fits." : view === "backlog" ? "Everything, captured." : "Progress worth seeing.";
+  const currentKicker = view === "dashboard" ? `${formatDayHeading(new Date())} · private and offline` : view === "today" ? "Today, without the noise" : view === "schedule" ? "Balanced automatically, editable always" : view === "backlog" ? `${backlog.length} task${backlog.length === 1 ? "" : "s"} waiting for a place` : `${completed.length} completed task${completed.length === 1 ? "" : "s"}`;
 
   return (
     <main className="app-frame">
@@ -453,7 +493,7 @@ export default function PlannerApp() {
       <div className="sky-shade" />
       <section className={`workspace ${ready ? "is-ready" : ""}`}>
         <aside className="sidebar">
-          <button className="brand" onClick={() => setView("today")} aria-label="Open today">
+          <button className="brand" onClick={() => openView("dashboard")} aria-label="Open dashboard">
             <span className="brand-orb"><Image src={logoMark} alt="" width={26} height={26} /></span>
             <span className="brand-name">DamnTodo</span>
           </button>
@@ -461,7 +501,7 @@ export default function PlannerApp() {
             {NAVIGATION.map(({ id, label, icon: Icon }) => {
               const count = countForView(id, state.tasks);
               return (
-                <button key={id} className={`nav-item ${view === id ? "active" : ""}`} onClick={() => setView(id)} aria-current={view === id ? "page" : undefined}>
+                <button key={id} className={`nav-item ${view === id ? "active" : ""}`} onClick={() => openView(id)} aria-current={view === id ? "page" : undefined}>
                   <span><Icon size={18} /> <span className="nav-label">{label}</span></span>
                   {count > 0 && <b>{count}</b>}
                 </button>
@@ -477,7 +517,10 @@ export default function PlannerApp() {
 
         <div className="content-shell">
           <header className="topbar">
-            <div className="title-block"><span className="eyebrow">{currentKicker}</span><h1>{currentTitle}</h1></div>
+            <div className="topbar-heading">
+              {view !== "dashboard" && <button className="back-button" onClick={() => openView("dashboard")} aria-label="Back to dashboard"><ArrowLeft size={17} /><span>Dashboard</span></button>}
+              <div className="title-block"><span className="eyebrow">{currentKicker}</span><h1>{currentTitle}</h1></div>
+            </div>
             <div className="top-actions">
               {!installed && !native && <ShimmerButton onClick={() => setInstallInfoOpen(true)} background="rgba(108, 159, 234, .14)" shimmerColor="#d8eaff" borderRadius="12px" className="mobile-install-cta" aria-label="Install DamnTodo"><Download size={17} /></ShimmerButton>}
               {backlog.length > 0 && <button className="button button-quiet plan-button" onClick={planBacklog}><Sparkles size={16} /> <span>Plan backlog</span></button>}
@@ -487,6 +530,23 @@ export default function PlannerApp() {
 
           {!ready ? <LoadingSurface /> : (
             <div className="view-stage" key={view}>
+              {view === "dashboard" && (
+                <DashboardView
+                  todayTasks={todayTasks}
+                  overdue={overdue}
+                  backlog={backlog}
+                  completed={completed}
+                  scheduled={scheduledTasks}
+                  focusTask={focusTask}
+                  completionRate={completionRate}
+                  onOpen={openView}
+                  onAdd={() => setEditor({ task: null })}
+                  onPlan={planBacklog}
+                  onEdit={(task) => setEditor({ task })}
+                  onToggle={toggleComplete}
+                  onDelete={removeTask}
+                />
+              )}
               {view === "today" && (
                 <TodayView
                   tasks={todayTasks}
@@ -586,6 +646,84 @@ interface TaskActions {
   onDelete: (task: Task) => void;
   onToday?: (task: Task) => void;
   onBacklog?: (task: Task) => void;
+}
+
+function DashboardView({ todayTasks, overdue, backlog, completed, scheduled, focusTask, completionRate, onOpen, onAdd, onPlan, onEdit, onToggle, onDelete }: {
+  todayTasks: Task[];
+  overdue: Task[];
+  backlog: Task[];
+  completed: Task[];
+  scheduled: Task[];
+  focusTask: Task | null;
+  completionRate: number;
+  onOpen: (view: View) => void;
+  onAdd: () => void;
+  onPlan: () => void;
+  onEdit: (task: Task) => void;
+  onToggle: (task: Task) => void;
+  onDelete: (task: Task) => void;
+}) {
+  const todayMinutes = todayTasks.reduce((sum, task) => sum + task.duration, 0);
+  const nextTasks = scheduled.filter((task) => task.scheduledAt).sort(taskSort).slice(0, 4);
+  const metrics = [
+    { label: "Today", value: todayTasks.length, note: `${formatDuration(todayMinutes)} planned`, icon: Target, tone: "sky" },
+    { label: "Needs care", value: overdue.length, note: overdue.length ? "Ready to rescue" : "Nothing overdue", icon: Flame, tone: overdue.length ? "rose" : "mint" },
+    { label: "Backlog", value: backlog.length, note: backlog.length ? "Ready to distribute" : "Beautifully clear", icon: Inbox, tone: "violet" },
+    { label: "Completed", value: completed.length, note: `${completionRate}% of all tasks`, icon: TrendingUp, tone: "mint" },
+  ];
+
+  return (
+    <div className="overview-dashboard">
+      <Card className="dashboard-hero">
+        <div className="hero-aurora" />
+        <CardContent className="dashboard-hero-content">
+          <div className="hero-copy">
+            <Badge variant="secondary" className="hero-badge"><Sparkles size={13} /> Your offline command center</Badge>
+            <h2>{focusTask ? `Start gently with ${focusTask.title}` : "Your time belongs to you."}</h2>
+            <p>{focusTask ? `${formatDuration(focusTask.duration)} is already set aside. One honest step is enough to begin.` : "Capture the outcome, choose the total effort, and let DamnTodo make the days feel lighter."}</p>
+            <div className="hero-actions">
+              <button className="button button-primary hero-primary" onClick={onAdd}><Plus size={17} /> New task or goal</button>
+              {backlog.length > 0 ? <button className="button button-quiet" onClick={onPlan}><Sparkles size={16} /> Balance my backlog</button> : <button className="button button-quiet" onClick={() => onOpen("schedule")}><CalendarDays size={16} /> Open schedule</button>}
+            </div>
+          </div>
+          <div className="hero-focus-ring" style={{ background: `conic-gradient(#92c4ff ${completionRate}%, rgba(255, 255, 255, .08) 0)` }} aria-label={`${completionRate}% completion rate`}>
+            <span><strong>{completionRate}%</strong><small>overall done</small></span>
+          </div>
+        </CardContent>
+      </Card>
+
+      <section className="metric-grid" aria-label="Planner summary">
+        {metrics.map(({ label, value, note, icon: Icon, tone }) => (
+          <Card className={`overview-metric tone-${tone}`} key={label}>
+            <CardHeader><span className="metric-icon"><Icon size={18} /></span><Badge variant="outline">Live</Badge></CardHeader>
+            <CardContent><strong>{value}</strong><span>{label}</span><small>{note}</small></CardContent>
+          </Card>
+        ))}
+      </section>
+
+      <section className="dashboard-lower-grid">
+        <Card className="dashboard-panel next-panel">
+          <CardHeader className="dashboard-panel-heading"><div><span className="eyebrow">Coming up</span><CardTitle>Your next clear steps</CardTitle></div><button className="soft-link" onClick={() => onOpen("schedule")}>Full schedule <ArrowUpRight size={15} /></button></CardHeader>
+          <CardContent>
+            {nextTasks.length ? <div className="dashboard-task-list">{nextTasks.map((task) => <TaskCard key={task.id} task={task} compact onEdit={onEdit} onToggle={onToggle} onDelete={onDelete} />)}</div> : <div className="dashboard-calm-empty"><CalendarDays size={23} /><div><strong>Your horizon is open</strong><span>Add a goal or let the scheduler place your backlog.</span></div></div>}
+          </CardContent>
+        </Card>
+
+        <Card className="dashboard-panel pulse-panel">
+          <CardHeader><span className="eyebrow">Your rhythm</span><CardTitle>Momentum, without pressure</CardTitle></CardHeader>
+          <CardContent>
+            <div className="progress-copy"><span>All-time completion</span><strong>{completionRate}%</strong></div>
+            <Progress value={completionRate} className="dashboard-progress" />
+            <div className="dashboard-shortcuts">
+              <button onClick={() => onOpen("today")}><span className="shortcut-icon sky"><Target size={18} /></span><span><strong>Shape today</strong><small>{todayTasks.length} planned</small></span><ChevronRight size={16} /></button>
+              <button onClick={() => onOpen("backlog")}><span className="shortcut-icon violet"><Inbox size={18} /></span><span><strong>Clear the backlog</strong><small>{backlog.length} waiting</small></span><ChevronRight size={16} /></button>
+              <button onClick={() => onOpen("completed")}><span className="shortcut-icon mint"><CheckCircle2 size={18} /></span><span><strong>See your wins</strong><small>{completed.length} completed</small></span><ChevronRight size={16} /></button>
+            </div>
+          </CardContent>
+        </Card>
+      </section>
+    </div>
+  );
 }
 
 function TaskCard({ task, compact = false, ...actions }: { task: Task; compact?: boolean } & TaskActions) {
