@@ -178,6 +178,15 @@ export default function PlannerApp() {
   }, []);
 
   useEffect(() => {
+    if (!runningAsApp || native) return;
+    const blockStandaloneRefresh = (event: KeyboardEvent) => {
+      if (event.key === "F5" || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "r")) event.preventDefault();
+    };
+    window.addEventListener("keydown", blockStandaloneRefresh);
+    return () => window.removeEventListener("keydown", blockStandaloneRefresh);
+  }, [native, runningAsApp]);
+
+  useEffect(() => {
     let active = true;
     loadState().then((saved) => {
       if (!active) return;
@@ -505,6 +514,7 @@ export default function PlannerApp() {
       const result = createRoadmap(safeDraft);
       if (result.error) { announce(result.error); return; }
       setState((current) => ({ ...current, roadmaps: [result.roadmap!, ...current.roadmaps], tasks: [...result.tasks, ...current.tasks] }));
+      if (result.tasks[0]?.alarmMode !== "none") await scheduleAlarm(result.tasks[0]);
       openView("schedule");
       announce(`Built ${result.tasks.length} sessions inside one ${safeDraft.title.trim()} roadmap.`);
     } else {
@@ -520,12 +530,17 @@ export default function PlannerApp() {
     try {
       if (!alarmsAvailable) return;
       if (task.status === "completed" || task.alarmMode === "none" || nextReminderOccurrence(task) === null) { await cancelNativeTaskAlarm(task.id); return; }
-      if (isNativeApp()) {
-        const permission = await prepareNativeAlarms(task.alarmMode === "strict");
-        if (!permission.granted) { announce("Alarm permission is still off in Android settings."); return; }
-        await scheduleNativeTaskAlarm(task);
-        if (task.alarmMode === "strict" && !permission.exact) announce("Android will use an inexact alarm until Alarms & reminders is allowed.");
+      if (!isNativeApp()) {
+        if (!("Notification" in window)) { announce("This installed browser does not support notification permission."); return; }
+        const permission = Notification.permission === "default" ? await Notification.requestPermission() : Notification.permission;
+        setNotificationPermission(permission);
+        announce(permission === "granted" ? "Notification permission granted. Keep the installed app available for web follow-ups." : "Task saved, but notifications are blocked. Enable them in app settings.");
+        return;
       }
+      const permission = await prepareNativeAlarms(task.alarmMode === "strict");
+      if (!permission.granted) { announce("Task saved, but Android notification permission is off."); return; }
+      await scheduleNativeTaskAlarm(task);
+      announce(task.alarmMode === "strict" && !permission.exact ? "Notification allowed. Enable Alarms & reminders for exact red alarms." : "Android alarm permission granted and the alarm is scheduled.");
     } catch {
       announce("The task was saved, but Android could not schedule its alarm yet.");
     }
@@ -776,7 +791,7 @@ export default function PlannerApp() {
             })}
           </nav>
           <div className="sidebar-bottom">
-            <ShimmerButton onClick={() => setInstallInfoOpen(true)} background="rgba(108, 159, 234, .12)" shimmerColor="#d8eaff" borderRadius="12px" className="install-side-cta"><Install size={17} /><span>{native ? "Android app" : installed ? "Installed" : "Install app"}</span></ShimmerButton>
+            <ShimmerButton onClick={() => setInstallInfoOpen(true)} background="rgba(108, 159, 234, .12)" shimmerColor="#e7f5ff" shimmerDuration="1.9s" borderRadius="12px" className="install-side-cta install-blast-button"><Install size={17} /><span>{native ? "Android app" : installed ? "Installed" : "Install app"}</span></ShimmerButton>
             <button className="side-action" onClick={() => setSettingsOpen(true)}><Settings size={17} /><span>Settings</span></button>
             <div className="offline-status"><span className="status-dot" /><span>Private &amp; offline</span></div>
           </div>
