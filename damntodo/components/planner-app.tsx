@@ -129,8 +129,9 @@ export default function PlannerApp() {
   const [installInfoOpen, setInstallInfoOpen] = useState(false);
   const [installForAlarm, setInstallForAlarm] = useState(false);
   const [installed, setInstalled] = useState(false);
+  const [runningAsApp, setRunningAsApp] = useState(false);
   const native = useSyncExternalStore(() => () => undefined, isNativeApp, () => false);
-  const alarmsAvailable = native || installed;
+  const alarmsAvailable = native || runningAsApp;
   const [activeAlarmId, setActiveAlarmId] = useState<string | null>(null);
   const [alarmMomentIds, setAlarmMomentIds] = useState<string[]>([]);
   const [deleteTarget, setDeleteTarget] = useState<{ kind: "task"; task: Task } | { kind: "roadmap"; roadmap: Roadmap } | null>(null);
@@ -195,7 +196,7 @@ export default function PlannerApp() {
   }, [view]);
 
   useEffect(() => {
-    if (!ready || !alarmsAvailable) return;
+    if (!ready) return;
     const timer = setTimeout(() => {
       saveState(state).catch(() => announce("Could not save changes. Keep this tab open and try again."));
     }, 180);
@@ -228,11 +229,14 @@ export default function PlannerApp() {
     };
     const onInstalled = () => {
       setInstalled(true);
+      setRunningAsApp(window.matchMedia("(display-mode: standalone)").matches || isNativeApp());
       setInstallPrompt(null);
-      announce("DamnTodo is installed and ready offline.");
+      announce("DamnTodo is installed. Open it from your home screen to enable alarms.");
     };
     const syncPlatformState = () => {
-      setInstalled(window.matchMedia("(display-mode: standalone)").matches);
+      const standalone = window.matchMedia("(display-mode: standalone)").matches;
+      setInstalled(standalone);
+      setRunningAsApp(standalone);
       setNotificationPermission("Notification" in window ? Notification.permission : "denied");
     };
     const frame = window.requestAnimationFrame(syncPlatformState);
@@ -290,7 +294,7 @@ export default function PlannerApp() {
   }, [activeAlarmId, playReminderTone]);
 
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || !alarmsAvailable) return;
     const checkReminders = async () => {
       const now = Date.now();
       const due = state.tasks.filter((task) => {
@@ -298,6 +302,8 @@ export default function PlannerApp() {
         if (task.status === "completed" || !alarmAt || task.reminderMinutes === null || task.alarmMode === "none") return false;
         const reminderKey = `${alarmAt}:${task.reminderMinutes}:${task.snoozedUntil ?? ""}`;
         const triggerAt = task.snoozedUntil ? new Date(task.snoozedUntil).getTime() : new Date(alarmAt).getTime() - task.reminderMinutes * 60_000;
+        const configuredAt = new Date(task.updatedAt || task.createdAt).getTime();
+        if (!task.snoozedUntil && triggerAt < configuredAt - 5_000) return false;
         return triggerAt <= now && task.remindedFor !== reminderKey;
       });
       if (!due.length) return;
@@ -773,6 +779,7 @@ export default function PlannerApp() {
           notificationPermission={notificationPermission}
           installed={installed}
           native={native}
+          alarmsAvailable={alarmsAvailable}
           onChange={(settings) => setState((current) => ({ ...current, settings }))}
           onClose={() => setSettingsOpen(false)}
           onEnableNotifications={enableNotifications}
@@ -1134,9 +1141,8 @@ function ModalShell({ children, titleId, onClose, wide = false }: { children: Re
   return <div className="modal-backdrop" onMouseDown={onBackdrop}><div ref={panelRef} className={`modal-panel ${wide ? "wide" : ""}`} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}>{children}</div></div>;
 }
 
-function SettingsPanel({ settings, notificationPermission, installed, native, onChange, onClose, onEnableNotifications, onAlarmUnavailable, onInstall, onExport, onImport, onClear }: { settings: PlannerSettings; notificationPermission: NotificationPermission; installed: boolean; native: boolean; onChange: (settings: PlannerSettings) => void; onClose: () => void; onEnableNotifications: () => void; onAlarmUnavailable: () => void; onInstall: () => void; onExport: () => void; onImport: (file: File) => void; onClear: () => void }) {
+function SettingsPanel({ settings, notificationPermission, installed, native, alarmsAvailable, onChange, onClose, onEnableNotifications, onAlarmUnavailable, onInstall, onExport, onImport, onClear }: { settings: PlannerSettings; notificationPermission: NotificationPermission; installed: boolean; native: boolean; alarmsAvailable: boolean; onChange: (settings: PlannerSettings) => void; onClose: () => void; onEnableNotifications: () => void; onAlarmUnavailable: () => void; onInstall: () => void; onExport: () => void; onImport: (file: File) => void; onClear: () => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
-  const alarmsAvailable = native || installed;
   const toggleWorkDay = (day: number) => onChange({ ...settings, workDays: settings.workDays.includes(day) ? settings.workDays.filter((item) => item !== day) : [...settings.workDays, day] });
   return (
     <ModalShell titleId="settings-title" onClose={onClose} wide>
