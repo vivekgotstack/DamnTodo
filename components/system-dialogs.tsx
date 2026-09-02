@@ -13,9 +13,10 @@ import { RainbowButton } from "@/components/ui/rainbow-button";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDuration, type Task } from "@/lib/planner";
 
-export function MotivationMoment({ mode, taskTitle, onFinish, onSnooze, onCheckIn, onBacklog }: {
+export function MotivationMoment({ mode, taskTitle, alarmMode, onFinish, onSnooze, onCheckIn, onBacklog }: {
   mode: "opening" | "alarm";
   taskTitle?: string;
+  alarmMode?: Task["alarmMode"];
   onFinish: () => void;
   onSnooze?: () => void;
   onCheckIn?: () => void;
@@ -36,26 +37,17 @@ export function MotivationMoment({ mode, taskTitle, onFinish, onSnooze, onCheckI
       aria-modal={opening ? undefined : true}
       aria-label={opening ? "Opening DamnTodo" : `Alarm for ${taskTitle ?? "your task"}`}
     >
-      <Image
-        className="motivation-gif"
-        src="/motivation-strange.gif"
-        alt={opening ? "Opening motivation moment" : `Motivation moment for ${taskTitle ?? "your alarm"}`}
-        fill
-        unoptimized
-        priority={opening}
-        sizes="100vw"
-        onError={opening ? onFinish : undefined}
-      />
-      <div className="motivation-vignette" />
-      {!opening && (
-        <div className="motivation-callout">
-          <span>One chance. Make it count.</span>
+      {opening ? <><Image className="motivation-gif" src="/motivation-strange.gif" alt="Opening DamnTodo" fill unoptimized priority sizes="100vw" onError={onFinish} /><div className="motivation-vignette" /></> : (
+        <div className="alarm-wake-card">
+          <span className="alarm-wake-icon"><AlarmClock className="size-9" /></span>
+          <span className="alarm-wake-label">{alarmMode === "strict" ? "Red Mode alarm" : "Task reminder"}</span>
           <h2>{taskTitle}</h2>
+          <p>Your focus block has ended. Choose the next accurate action.</p>
           <div className="motivation-controls">
-            {onSnooze && <Button variant="outline" onClick={onSnooze} className="h-12 border-white/35 bg-slate-950/45 px-5 text-white backdrop-blur-sm hover:bg-slate-900/70 hover:text-white">Snooze 1 hour</Button>}
-            <Button onClick={onFinish} className="h-12 bg-white px-6 text-slate-950 shadow-2xl hover:bg-sky-50">Stop alarm</Button>
-            {onCheckIn && <Button variant="ghost" onClick={onCheckIn} className="h-12 bg-rose-300/15 px-5 text-rose-50 hover:bg-rose-300/25 hover:text-white">Check in</Button>}
+            {onCheckIn && <Button onClick={onCheckIn} className="h-12 bg-rose-200 px-6 text-rose-950 shadow-2xl hover:bg-rose-100"><CheckCircle2 className="size-4" />Mark complete</Button>}
+            {onSnooze && <Button variant="outline" onClick={onSnooze} className="h-12 border-white/15 bg-white/5 px-5 text-white hover:bg-white/10 hover:text-white">Snooze 1 hour</Button>}
             {onBacklog && <Button variant="ghost" onClick={onBacklog} className="h-12 bg-amber-300/15 px-5 text-amber-50 hover:bg-amber-300/25 hover:text-white"><ArchiveRestore className="size-4" />Move to backlog</Button>}
+            <Button variant="ghost" onClick={onFinish} className="h-12 px-5 text-slate-300 hover:bg-white/5 hover:text-white">Dismiss for now</Button>
           </div>
         </div>
       )}
@@ -149,19 +141,19 @@ export function StrictAlarmDialog({ task, onComplete, onSnooze, onBacklog }: {
           <span className="strict-alarm-icon"><AlarmClock className="size-7" /></span>
           <Badge className="mt-5 w-fit bg-rose-300/12 text-rose-100">Strict alarm</Badge>
           <DialogTitle className="mt-2 text-3xl tracking-[-.045em] sm:text-4xl">{task.title}</DialogTitle>
-          <DialogDescription className="mt-2 text-sm leading-6 text-rose-50/55">You asked DamnTodo not to let this disappear with one dishonest tap.</DialogDescription>
+          <DialogDescription className="mt-2 text-sm leading-6 text-rose-50/55">Your focus block has ended. Record the result, snooze it, or move it back to the plan.</DialogDescription>
         </DialogHeader>
         <div className="relative px-6 py-6 sm:px-8">
           <div className="mb-5 grid grid-cols-2 gap-3">
             <Card className="border-white/10 bg-white/4 text-white"><CardContent className="p-4"><span className="text-[10px] uppercase tracking-widest text-rose-100/45">Work block</span><strong className="mt-1 block">{formatDuration(task.duration)}</strong></CardContent></Card>
-            <Card className="border-white/10 bg-white/4 text-white"><CardContent className="p-4"><span className="text-[10px] uppercase tracking-widest text-rose-100/45">Proof rule</span><strong className="mt-1 block">12 characters</strong></CardContent></Card>
+            <Card className="border-white/10 bg-white/4 text-white"><CardContent className="p-4"><span className="text-[10px] uppercase tracking-widest text-rose-100/45">Completion note</span><strong className="mt-1 block">Brief result</strong></CardContent></Card>
           </div>
           {!checkingIn ? (
-            <Button onClick={() => setCheckingIn(true)} className="h-12 w-full bg-rose-200 text-rose-950 hover:bg-rose-100"><CheckCircle2 className="size-4" />I actually finished it</Button>
+            <Button onClick={() => setCheckingIn(true)} className="h-12 w-full bg-rose-200 text-rose-950 hover:bg-rose-100"><CheckCircle2 className="size-4" />Mark this task complete</Button>
           ) : (
             <div className="grid gap-3">
               <label className="text-xs font-medium text-rose-50/75" htmlFor="strict-proof">What did you finish?</label>
-              <Textarea id="strict-proof" autoFocus value={note} onChange={(event) => setNote(event.target.value)} placeholder="Write one concrete result. No empty checkbox escape." className="min-h-28 border-white/12 bg-black/20 text-white placeholder:text-rose-50/25 focus-visible:border-rose-200/30 focus-visible:ring-rose-200/10" />
+              <Textarea id="strict-proof" autoFocus value={note} onChange={(event) => setNote(event.target.value)} placeholder="Briefly note the concrete result you completed." className="min-h-28 border-white/12 bg-black/20 text-white placeholder:text-rose-50/25 focus-visible:border-rose-200/30 focus-visible:ring-rose-200/10" />
               <Progress value={Math.min(100, note.trim().length / 12 * 100)} className="h-1.5 bg-white/8" />
               <Button disabled={!enough} onClick={() => onComplete(note.trim())} className="h-12 bg-rose-200 text-rose-950 hover:bg-rose-100">Confirm completed</Button>
             </div>

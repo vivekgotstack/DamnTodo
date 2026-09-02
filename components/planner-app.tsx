@@ -955,7 +955,7 @@ export default function PlannerApp() {
       )}
       <InstallDialog open={installInfoOpen} installed={installed} native={native} alarmOnly={installForAlarm} onClose={() => { setInstallInfoOpen(false); setInstallForAlarm(false); }} onInstall={() => void installApp()} />
       {showOpening && <MotivationMoment mode="opening" onFinish={finishOpening} />}
-      {alarmsAvailable && activeAlarmMoment && <MotivationMoment mode="alarm" taskTitle={activeAlarmMoment.title} onFinish={stopAlarmMoment} onSnooze={snoozeAlarmMoment} onCheckIn={activeAlarmMoment.alarmMode === "strict" ? finishAlarmMoment : undefined} onBacklog={activeAlarmMoment.alarmMode === "strict" ? () => beginAlarmBacklogMove(activeAlarmMoment.id) : undefined} />}
+      {alarmsAvailable && activeAlarmMoment && <MotivationMoment mode="alarm" taskTitle={activeAlarmMoment.title} alarmMode={activeAlarmMoment.alarmMode} onFinish={stopAlarmMoment} onSnooze={snoozeAlarmMoment} onCheckIn={activeAlarmMoment.alarmMode === "strict" ? finishAlarmMoment : undefined} onBacklog={activeAlarmMoment.alarmMode === "strict" ? () => beginAlarmBacklogMove(activeAlarmMoment.id) : undefined} />}
       {alarmsAvailable && activeAlarmId && state.tasks.find((task) => task.id === activeAlarmId) && (
         <StrictAlarmDialog task={state.tasks.find((task) => task.id === activeAlarmId)!} onComplete={completeStrictAlarm} onSnooze={snoozeStrictAlarm} onBacklog={() => beginAlarmBacklogMove(activeAlarmId)} />
       )}

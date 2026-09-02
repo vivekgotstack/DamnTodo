@@ -1,7 +1,8 @@
 import { Capacitor } from "@capacitor/core";
 import { nextDayRetryStart, nextReminderOccurrence, type Task } from "./planner";
 
-const CHANNEL_ID = "damntodo-strict";
+const GENTLE_CHANNEL_ID = "damntodo-reminders-v2";
+const RED_ALARM_CHANNEL_ID = "damntodo-red-alarm-v2";
 const FOLLOW_UPS = 24;
 
 export interface NativeAlarmAccessOptions {
@@ -32,12 +33,12 @@ export async function prepareNativeAlarms({ requestNotifications = false, reques
   let permission = await LocalNotifications.checkPermissions();
   if (permission.display !== "granted" && requestNotifications) permission = await LocalNotifications.requestPermissions();
   await LocalNotifications.createChannel({
-    id: CHANNEL_ID,
-    name: "Strict alarms",
-    description: "Persistent DamnTodo work alarms",
-    importance: 5,
+    id: GENTLE_CHANNEL_ID,
+    name: "Gentle reminders",
+    description: "Quiet DamnTodo task check-ins",
+    importance: 3,
     visibility: 1,
-    vibration: true,
+    vibration: false,
     lights: true,
   });
   let exact = true;
@@ -52,13 +53,17 @@ export async function prepareNativeAlarms({ requestNotifications = false, reques
   return { native: true, exact, granted: permission.display === "granted" };
 }
 
-export async function scheduleNativeTaskAlarm(task: Task, exact = false) {
+export async function scheduleNativeTaskAlarm(task: Task, exact?: boolean) {
   if (!isNativeApp() || task.status === "completed" || task.alarmMode === "none") return;
   const { LocalNotifications } = await import("@capacitor/local-notifications");
   await cancelNativeTaskAlarm(task.id);
   const trigger = nextReminderOccurrence(task);
   if (trigger === null) return;
   const strict = task.alarmMode === "strict";
+  if (exact === undefined && Capacitor.getPlatform() === "android") {
+    const setting = await LocalNotifications.checkExactNotificationSetting();
+    exact = setting.exact_alarm === "granted";
+  }
   const triggers: number[] = [];
   if (task.status === "scheduled" && task.scheduledAt) {
     const dayEnd = new Date(task.scheduledAt);
@@ -74,15 +79,17 @@ export async function scheduleNativeTaskAlarm(task: Task, exact = false) {
   await LocalNotifications.schedule({
     notifications: triggers.map((at, index) => ({
       id: notificationIds(task.id)[index],
-      title: strict ? "DamnTodo red alarm" : "DamnTodo hourly reminder",
-      body: strict ? `${task.title} is still unfinished. Complete it or move it honestly to tomorrow's backlog.` : `${task.title} is still unfinished. This reminder returns each hour.`,
-      largeBody: strict ? `Open DamnTodo to complete ${task.title}, snooze one hour, or move it to a high-priority backlog retry.` : undefined,
-      channelId: CHANNEL_ID,
+      title: strict ? `Red Mode · ${task.title}` : `DamnTodo check-in · ${task.title}`,
+      body: strict ? "Your focus block has ended. Open DamnTodo to complete it, snooze for one hour, or reschedule it." : "Your focus block has ended. Open DamnTodo when you are ready to update it.",
+      largeBody: strict ? `Your focus block for ${task.title} has ended. Open DamnTodo to mark it complete, snooze for one hour, or move it to tomorrow's backlog.` : undefined,
+      channelId: strict ? RED_ALARM_CHANNEL_ID : GENTLE_CHANNEL_ID,
+      smallIcon: "ic_stat_damntodo",
+      iconColor: strict ? "#FF718F" : "#92BDFF",
       schedule: { at: new Date(at), allowWhileIdle: true },
       foreground: true,
       ongoing: strict,
       autoCancel: !strict,
-      isExactNotification: exact,
+      isExactNotification: exact ?? false,
       extra: { taskId: task.id, strict },
     })),
   });
